@@ -9,7 +9,9 @@ export default async function Dashboard({searchParams}:{searchParams:Promise<{de
   {denied&&<p role="alert" className="mt-5 rounded bg-red-50 p-4 text-red-800">この画面にアクセスする権限がありません。</p>}
   <h2 className="mb-3 mt-8 text-xl font-bold">あなたの権限</h2>
   <ul className="grid gap-2 sm:grid-cols-2">{Object.entries(permissionLabels).filter(([permission])=>can(user.role,permission)).map(([permission,label])=><li key={permission} className="rounded bg-white p-3">{label}</li>)}</ul>
+  <Link href="/tools" className="mt-6 mr-4 inline-block rounded bg-blue-900 px-5 py-3 text-white">工具・在庫を検索</Link>
+  {can(user.role,'masters:write')&&<Link href="/admin/masters" className="mt-6 mr-4 inline-block rounded border px-5 py-3">設備・保管場所・仕入先の管理</Link>}
   {can(user.role,'users:manage')&&<Link href="/admin/users" className="mt-6 inline-block rounded bg-blue-900 px-5 py-3 text-white">ユーザー・権限管理</Link>}
-  <p className="mt-8 text-sm">現在は認証・権限の確認段階です。在庫・入出庫・発注の操作画面は後続フェーズで追加します。</p>
+  <p className="mt-8 text-sm">工具検索・マスタ管理・棚別在庫と初期在庫登録を利用できます。手動入出庫は次のフェーズで追加します。</p>
  </main>;
 }

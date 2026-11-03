@@ -10,7 +10,7 @@
     "dev": "next dev --hostname 127.0.0.1",
     "build": "prisma generate && next build",
     "start": "next start --hostname 127.0.0.1",
-    "typecheck": "prisma generate && tsc --noEmit",
+    "typecheck": "prisma generate && next typegen && tsc --noEmit",
     "db:generate": "prisma generate",
     "db:validate": "prisma validate",
     "db:migrate": "prisma migrate deploy",
@@ -19,7 +19,9 @@
     "auth:setup-dev": "node scripts/run-typescript.mjs setup",
     "test:auth": "node scripts/run-typescript.mjs auth",
     "test:http": "node scripts/run-typescript.mjs http",
-    "test": "npm run test:db && npm run test:auth && npm run build && npm run test:http"
+    "test": "npm run test:db && npm run test:auth && npm run test:masters && npm run build && npm run test:http && npm run test:masters-http",
+    "test:masters": "node scripts/run-typescript.mjs masters",
+    "test:masters-http": "node scripts/run-typescript.mjs masters-http"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.3.0",

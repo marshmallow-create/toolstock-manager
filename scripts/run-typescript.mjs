@@ -10,9 +10,11 @@ const targets = {
   auth: { entry: 'tests/auth.test.ts', args: ['--test'] },
   http: { entry: 'tests/auth-http.test.ts', args: ['--test'] },
   setup: { entry: 'scripts/setup-dev-users.ts', args: [] },
+  masters: { entry: 'tests/masters.test.ts', args: ['--test'] },
+  'masters-http': { entry: 'tests/masters-http.test.ts', args: ['--test'] },
 };
 const name = process.argv[2];
-if (!Object.hasOwn(targets, name)) throw new Error('Usage: node scripts/run-typescript.mjs seed|test|auth|http|setup');
+if (!Object.hasOwn(targets, name)) throw new Error('Usage: node scripts/run-typescript.mjs ' + Object.keys(targets).join('|'));
 const target = targets[name];
 const outfile = resolve(root, '.cache/typescript', `${name}.mjs`);
 await build({

@@ -63,14 +63,17 @@ export class AuthService {
   if(creating&&(typeof input.employee_code!=='string'||!/^[A-Z0-9_-]{1,32}$/.test(input.employee_code))) throw new AuthError(400,'社員IDは半角英大文字・数字・ハイフン・アンダースコア32文字以内です');
   if((creating||input.password)&& (typeof input.password!=='string'||input.password.length<12||input.password.length>128)) throw new AuthError(400,'パスワードは12〜128文字で設定してください');
  }
- private async asAdmin<T>(token:string|undefined,operation:(tx:Client,actor:Viewer)=>Promise<T>) {
+ async authorized<T>(token:string|undefined,required:readonly string[],operation:(tx:Client,actor:Viewer)=>Promise<T>) {
   return this.db.$transaction(async tx=>{
-   // 管理者の同時降格による全管理者喪失を防ぐ。小規模ローカル運用の管理操作だけを直列化する。
+   // 低頻度の管理・マスタ書き込みを同じ順序で直列化し、認可と監査を一体にする。
    await tx.$executeRaw`LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE`;
    const actor=await this.authenticated(tx,token);
-   if(!can(actor.role,'users:manage')) throw new AuthError(403,'この操作を行う権限がありません');
+   if(required.some(permission=>!can(actor.role,permission))) throw new AuthError(403,'この操作を行う権限がありません');
    return operation(tx,actor);
   },{timeout:10_000});
+ }
+ private asAdmin<T>(token:string|undefined,operation:(tx:Client,actor:Viewer)=>Promise<T>) {
+  return this.authorized(token,['users:manage'],operation);
  }
  async createUser(token:string|undefined,input:{employee_code:string;name:string;role:Role;password:string}) {
   await this.authenticate(token,'users:manage'); this.validate(input,true);
