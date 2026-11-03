@@ -1,0 +1,12 @@
+node_modules/
+.next/
+src/generated/
+.env*
+!.env.example
+.npm-cache/
+*.tsbuildinfo
+backups/
+*.log
+.cache/
+
+.local/

@@ -1,0 +1,243 @@
+generator client {
+ provider = "prisma-client"
+ output = "../src/generated/prisma"
+}
+datasource db {
+ provider = "postgresql"
+}
+enum Role {
+ WORKER
+ STOCK_MANAGER
+ PURCHASER
+ ADMIN
+}
+enum TransactionType {
+ RECEIVE
+ ISSUE
+ ADJUSTMENT
+ REVERSAL
+ RETURN
+}
+enum OrderStatus {
+ DRAFT
+ PENDING_APPROVAL
+ APPROVED
+ EXPORTED
+ ORDERED
+ PARTIALLY_RECEIVED
+ RECEIVED
+ REJECTED
+ CANCELLED
+}
+enum CandidateStatus {
+ OPEN
+ CONVERTED
+ DISMISSED
+}
+model User {
+ password_hash String?
+ sessions Session[]
+ id String @id @default(uuid()) @db.Uuid
+ employee_code String @unique
+ name String
+ role Role
+ active Boolean @default(true)
+ created_at DateTime @default(now()) @db.Timestamptz(3)
+ updated_at DateTime @updatedAt @db.Timestamptz(3)
+ inventory_transactions_actor_user_id_children InventoryTransaction[] @relation("inventory_transactions_actor_user_id")
+ purchase_orders_requested_by_children PurchaseOrder[] @relation("purchase_orders_requested_by")
+ purchase_orders_approved_by_children PurchaseOrder[] @relation("purchase_orders_approved_by")
+ audit_logs_actor_user_id_children AuditLog[] @relation("audit_logs_actor_user_id")
+ @@map("users")
+}
+model Tool {
+ id String @id @default(uuid()) @db.Uuid
+ tool_code String @unique
+ name String
+ category String
+ manufacturer String
+ model String
+ unit String
+ active Boolean @default(true)
+ created_at DateTime @default(now()) @db.Timestamptz(3)
+ updated_at DateTime @updatedAt @db.Timestamptz(3)
+ stock_balances_tool_id_children StockBalance[] @relation("stock_balances_tool_id")
+ inventory_transactions_tool_id_children InventoryTransaction[] @relation("inventory_transactions_tool_id")
+ inventory_policies_tool_id_children InventoryPolicy? @relation("inventory_policies_tool_id")
+ supplier_items_tool_id_children SupplierItem[] @relation("supplier_items_tool_id")
+ purchase_order_items_tool_id_children PurchaseOrderItem[] @relation("purchase_order_items_tool_id")
+ reorder_candidates_tool_id_children ReorderCandidate[] @relation("reorder_candidates_tool_id")
+ @@map("tools")
+}
+model Machine {
+ id String @id @default(uuid()) @db.Uuid
+ machine_code String @unique
+ name String
+ active Boolean @default(true)
+ created_at DateTime @default(now()) @db.Timestamptz(3)
+ updated_at DateTime @updatedAt @db.Timestamptz(3)
+ inventory_transactions_machine_id_children InventoryTransaction[] @relation("inventory_transactions_machine_id")
+ @@map("machines")
+}
+model Location {
+ id String @id @default(uuid()) @db.Uuid
+ location_code String @unique
+ name String
+ active Boolean @default(true)
+ created_at DateTime @default(now()) @db.Timestamptz(3)
+ updated_at DateTime @updatedAt @db.Timestamptz(3)
+ stock_balances_location_id_children StockBalance[] @relation("stock_balances_location_id")
+ inventory_transactions_location_id_children InventoryTransaction[] @relation("inventory_transactions_location_id")
+ @@map("locations")
+}
+model StockBalance {
+ id String @id @default(uuid()) @db.Uuid
+ tool_id String @db.Uuid
+ location_id String @db.Uuid
+ on_hand Int @default(0)
+ reserved Int @default(0)
+ created_at DateTime @default(now()) @db.Timestamptz(3)
+ updated_at DateTime @updatedAt @db.Timestamptz(3)
+ tool_id_record Tool @relation("stock_balances_tool_id", fields: [tool_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+ location_id_record Location @relation("stock_balances_location_id", fields: [location_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+ @@unique([tool_id, location_id])
+ @@map("stock_balances")
+}
+model InventoryTransaction {
+ id String @id @default(uuid()) @db.Uuid
+ tool_id String @db.Uuid
+ location_id String @db.Uuid
+ actor_user_id String @db.Uuid
+ machine_id String? @db.Uuid
+ type TransactionType
+ quantity Int
+ idempotency_key String @unique
+ reverses_id String? @db.Uuid @unique
+ reason String?
+ created_at DateTime @default(now()) @db.Timestamptz(3)
+ updated_at DateTime @updatedAt @db.Timestamptz(3)
+ tool_id_record Tool @relation("inventory_transactions_tool_id", fields: [tool_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+ location_id_record Location @relation("inventory_transactions_location_id", fields: [location_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+ actor_user_id_record User @relation("inventory_transactions_actor_user_id", fields: [actor_user_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+ machine_id_record Machine? @relation("inventory_transactions_machine_id", fields: [machine_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+ reverses_id_record InventoryTransaction? @relation("inventory_transactions_reverses_id", fields: [reverses_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+ inventory_transactions_reverses_id_children InventoryTransaction? @relation("inventory_transactions_reverses_id")
+ @@index([tool_id, created_at])
+ @@index([actor_user_id, created_at])
+ @@index([machine_id, created_at])
+ @@map("inventory_transactions")
+}
+model InventoryPolicy {
+ id String @id @default(uuid()) @db.Uuid
+ tool_id String @db.Uuid @unique
+ safety_stock Int
+ reorder_point Int
+ target_stock Int
+ created_at DateTime @default(now()) @db.Timestamptz(3)
+ updated_at DateTime @updatedAt @db.Timestamptz(3)
+ tool_id_record Tool @relation("inventory_policies_tool_id", fields: [tool_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+ @@map("inventory_policies")
+}
+model Supplier {
+ id String @id @default(uuid()) @db.Uuid
+ supplier_code String @unique
+ name String
+ email String?
+ active Boolean @default(true)
+ created_at DateTime @default(now()) @db.Timestamptz(3)
+ updated_at DateTime @updatedAt @db.Timestamptz(3)
+ supplier_items_supplier_id_children SupplierItem[] @relation("supplier_items_supplier_id")
+ purchase_orders_supplier_id_children PurchaseOrder[] @relation("purchase_orders_supplier_id")
+ @@map("suppliers")
+}
+model SupplierItem {
+ id String @id @default(uuid()) @db.Uuid
+ tool_id String @db.Uuid
+ supplier_id String @db.Uuid
+ supplier_model String?
+ unit_price Decimal @db.Decimal(14, 2)
+ order_multiple Int
+ lead_time_days Int
+ preferred Boolean @default(false)
+ created_at DateTime @default(now()) @db.Timestamptz(3)
+ updated_at DateTime @updatedAt @db.Timestamptz(3)
+ tool_id_record Tool @relation("supplier_items_tool_id", fields: [tool_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+ supplier_id_record Supplier @relation("supplier_items_supplier_id", fields: [supplier_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+ @@unique([tool_id, supplier_id])
+ @@map("supplier_items")
+}
+model PurchaseOrder {
+ id String @id @default(uuid()) @db.Uuid
+ order_no String @unique
+ supplier_id String @db.Uuid
+ status OrderStatus
+ requested_by String @db.Uuid
+ approved_by String? @db.Uuid
+ ordered_at DateTime? @db.Timestamptz(3)
+ created_at DateTime @default(now()) @db.Timestamptz(3)
+ updated_at DateTime @updatedAt @db.Timestamptz(3)
+ supplier_id_record Supplier @relation("purchase_orders_supplier_id", fields: [supplier_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+ requested_by_record User @relation("purchase_orders_requested_by", fields: [requested_by], references: [id], onDelete: Restrict, onUpdate: Cascade)
+ approved_by_record User? @relation("purchase_orders_approved_by", fields: [approved_by], references: [id], onDelete: Restrict, onUpdate: Cascade)
+ purchase_order_items_order_id_children PurchaseOrderItem[] @relation("purchase_order_items_order_id")
+ @@index([status, created_at])
+ @@map("purchase_orders")
+}
+model PurchaseOrderItem {
+ id String @id @default(uuid()) @db.Uuid
+ order_id String @db.Uuid
+ tool_id String @db.Uuid
+ ordered_quantity Int
+ received_quantity Int @default(0)
+ unit_price Decimal @db.Decimal(14, 2)
+ supplier_model String
+ order_multiple Int
+ lead_time_days Int
+ created_at DateTime @default(now()) @db.Timestamptz(3)
+ updated_at DateTime @updatedAt @db.Timestamptz(3)
+ order_id_record PurchaseOrder @relation("purchase_order_items_order_id", fields: [order_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+ tool_id_record Tool @relation("purchase_order_items_tool_id", fields: [tool_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+ @@index([order_id])
+ @@map("purchase_order_items")
+}
+model ReorderCandidate {
+ id String @id @default(uuid()) @db.Uuid
+ tool_id String @db.Uuid
+ status CandidateStatus
+ quantity Int
+ created_at DateTime @default(now()) @db.Timestamptz(3)
+ updated_at DateTime @updatedAt @db.Timestamptz(3)
+ tool_id_record Tool @relation("reorder_candidates_tool_id", fields: [tool_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+ @@map("reorder_candidates")
+}
+model AuditLog {
+ id String @id @default(uuid()) @db.Uuid
+ actor_user_id String @db.Uuid
+ action String
+ entity_type String
+ entity_id String
+ details Json
+ created_at DateTime @default(now()) @db.Timestamptz(3)
+ updated_at DateTime @updatedAt @db.Timestamptz(3)
+ actor_user_id_record User @relation("audit_logs_actor_user_id", fields: [actor_user_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+ @@index([actor_user_id, created_at])
+ @@map("audit_logs")
+}
+
+model Session {
+ token_hash String @id
+ user_id String @db.Uuid
+ created_at DateTime @default(now()) @db.Timestamptz(3)
+ last_seen_at DateTime @db.Timestamptz(3)
+ expires_at DateTime @db.Timestamptz(3)
+ user_record User @relation(fields: [user_id], references: [id], onDelete: Restrict)
+ @@index([user_id])
+ @@index([expires_at])
+ @@map("sessions")
+}
+model LoginAttempt {
+ key String @id
+ attempts Int
+ started_at DateTime @db.Timestamptz(3)
+ @@map("login_attempts")
+}
