@@ -8,5 +8,5 @@ src/generated/
 backups/
 *.log
 .cache/
-
 .local/
+next-env.d.ts
