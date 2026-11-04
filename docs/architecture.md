@@ -26,3 +26,15 @@ src/lib/masters/ は validation.ts（型・長さ・数値・UUID・業務コー
 AuthService.authorizedは usersテーブルのSHARE ROW EXCLUSIVEロック→セッション検証/更新→権限確認→業務処理の順で実行する。既存ユーザー管理も同じ入口を使う。初期在庫は追加でstock_balancesをロックし、キー照合から残高・履歴・監査まで一体で処理する。これは低頻度の管理処理向けであり、Phase 4の高頻度出庫は別途ロック範囲を設計する。
 
 購買条件は閲覧権限のあるリクエストでのみDBから取得し、作業者向けHTML/JSONへシリアライズしない。GETはno-store。単価はDecimalから小数2桁の文字列へ変換する。更新で許可した業務項目だけをDBへ渡し、操作者や残高の任意指定は採用しない。
+
+## Phase 4
+
+src/lib/inventory/ は types.ts（要求/履歴/確定結果の型）、validation.ts（数量・UUID・理由・日本時間の日付）、write.ts（再送・競合・残高/履歴/監査）、read.ts（権限付き履歴検索・詳細・候補）、service.ts、server.tsに分離する。ページとAPIは同じサービスを使用する。
+
+AuthService.inventoryAuthorizedは usersテーブルSHARE→sessions検証/更新→リクエストキーのトランザクションアドバイザリロック→工具行FOR UPDATE→棚別残高更新の順序を守る。Phase 4同士はusersの共有ロックを共存でき、Phase 3の管理/初期在庫書き込みとは競合させる。同一工具の棚操作は順序付け、別工具は別セッションから並行処理できる。lock_timeoutは3秒、トランザクションの最大時間は10秒。タイムアウト時は変更を戻し409の再試行案内にする。
+
+/inventory/issue、/inventory/receive、/inventory/adjustはサーバーで工具を選択し、小さなクライアントフォームで棚選択・数量＋/−・変更後見込みを更新する。確定は通常のHTML POST。設備の選択や操作キーを端末へ永続保存しない。/historyと/history/[id]で検索・詳細・逆取引を扱う。
+
+既存mutateは結果に応じたredirectToと入力に応じたerrorPathへ対応し、303の成功先を確定履歴にする。エラーURLはURLSearchParamsで構築して工具選択を保持する。既存の文字列URL・Cookie設定・Origin検証・JSONの応答を維持する。
+
+レビューで重大・重要な指摘なし。直近5件の表示では現在50件上限の履歴一覧APIを共用しており、専用の5件取得への軽量化は後続の改善候補とする。履歴の権限条件は共通化済み。

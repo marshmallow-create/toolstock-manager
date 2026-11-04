@@ -3,16 +3,25 @@ import { randomUUID } from 'node:crypto';
 import { pageUser } from '@/lib/auth/server';
 import { can } from '@/lib/auth/permissions';
 import { masters, pageTool, pageToken } from '@/lib/masters/server';
+import { inventory } from '@/lib/inventory/server';
+import { HistoryTable } from '@/components/inventory';
 import { Shell, Messages, SupplierForm, NumberField, inputClass, buttonClass, panelClass, masterCode, type Search } from '@/components/masters';
 export default async function ToolDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<Search> }) {
  const actor = await pageUser('inventory:read'), { id } = await params, tool = await pageTool(id), editable = can(actor.role, 'masters:write');
  const token = await pageToken(), service = masters();
+ const recent = (await inventory().listHistory(token, { tool_id: id })).items.slice(0, 5);
  const locations = editable ? await service.listMasters(token, 'locations') : [];
  const suppliers = editable ? await service.listMasters(token, 'suppliers') : [];
  const unregistered = locations.filter(location => location.active && !tool.stocks.some(stock => stock.location_id === location.id));
  const availableSuppliers = suppliers.filter(supplier => supplier.active && !tool.supplier_items?.some(item => item.supplier_id === supplier.id));
  return <Shell title={tool.tool_code + ' / ' + tool.name}>
   <Messages search={await searchParams} />
+  <nav aria-label="在庫操作" className="mb-6 flex flex-wrap gap-4">
+   {tool.active && can(actor.role, 'inventory:issue') && <Link href={'/inventory/issue?tool_id=' + tool.id} className={buttonClass}>この工具を出庫する</Link>}
+   {tool.active && can(actor.role, 'inventory:receive') && <Link href={'/inventory/receive?tool_id=' + tool.id} className="rounded border bg-white px-5 py-3">理由付き手動入庫</Link>}
+   {tool.active && can(actor.role, 'inventory:adjust') && <Link href={'/inventory/adjust?tool_id=' + tool.id} className="rounded border bg-white px-5 py-3">棚卸・実棚数を反映</Link>}
+   <Link href={'/history?tool_id=' + tool.id} className="self-center underline">この工具の履歴</Link>
+  </nav>
   <section className={'mb-6 ' + panelClass}>
    <dl className="grid gap-3 sm:grid-cols-2"><div><dt className="text-sm">分類 / メーカー / 型番</dt><dd>{tool.category} / {tool.manufacturer || '—'} / {tool.model || '—'}</dd></div><div><dt className="text-sm">数量単位 / 状態</dt><dd>{tool.unit} / {tool.active ? '有効' : '無効'}</dd></div></dl>
    <p className="mt-4">在庫方針（工具全体）：安全在庫 {tool.policy?.safety_stock ?? '未設定'} / 発注点 {tool.policy?.reorder_point ?? '未設定'} / 目標在庫 {tool.policy?.target_stock ?? '未設定'}</p>
@@ -31,6 +40,7 @@ export default async function ToolDetail({ params, searchParams }: { params: Pro
     <button className={buttonClass + ' sm:col-span-2'}>初期在庫を登録する</button>
    </form> : <p>{tool.active ? '登録可能な保管場所がありません。' : '無効な工具には登録できません。'} <Link href="/admin/masters" className="underline">保管場所の管理へ</Link></p>}
   </section>}
+  <section className="mb-6"><h2 className="mb-4 text-xl font-bold">直近の履歴（最大5件）</h2><HistoryTable items={recent} /><Link href={'/history?tool_id=' + tool.id} className="mt-3 inline-block underline">履歴を検索する</Link></section>
   {tool.supplier_items && <section className={'mb-6 ' + panelClass}><h2 className="mb-4 text-xl font-bold">購買条件</h2>
    {!tool.supplier_items.length && <p className="mb-4">購買条件は未登録です。</p>}
    <div className="grid gap-5">{tool.supplier_items.map(item => <article key={item.id} className="rounded border p-4"><h3 className="mb-3 font-bold">{item.supplier.supplier_code} / {item.supplier.name}{!item.supplier.active && '（無効）'}</h3>

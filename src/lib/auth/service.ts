@@ -72,6 +72,15 @@ export class AuthService {
    return operation(tx,actor);
   },{timeout:10_000});
  }
+ async inventoryAuthorized<T>(token:string|undefined,required:readonly string[],operation:(tx:Client,actor:Viewer)=>Promise<T>) {
+  return this.db.$transaction(async tx=>{
+   await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
+   await tx.$executeRaw`LOCK TABLE users IN SHARE MODE`;
+   const actor=await this.authenticated(tx,token);
+   if(required.some(permission=>!can(actor.role,permission))) throw new AuthError(403,'この操作を行う権限がありません');
+   return operation(tx,actor);
+  },{timeout:10_000,maxWait:5_000});
+ }
  private asAdmin<T>(token:string|undefined,operation:(tx:Client,actor:Viewer)=>Promise<T>) {
   return this.authorized(token,['users:manage'],operation);
  }

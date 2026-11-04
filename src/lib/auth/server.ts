@@ -25,20 +25,29 @@ export async function readBody(request:Request):Promise<Record<string,unknown>> 
   const body=JSON.parse(text);if(!body||typeof body!=='object'||Array.isArray(body)) throw new Error();return body;
  } catch(error){if(error instanceof AuthError)throw error;throw new AuthError(400,'入力を確認してください');}
 }
-type MutationResult={body?:unknown;status?:number;token?:string|null};
-export async function mutate(request:Request,successPath:string,errorPath:string,operation:(body:Record<string,unknown>)=>Promise<MutationResult>) {
+type MutationResult={body?:unknown;status?:number;token?:string|null;redirectTo?:string};
+type ErrorPath=string|((body?:Record<string,unknown>)=>string);
+export async function mutate(request:Request,successPath:string,errorPath:ErrorPath,operation:(body:Record<string,unknown>)=>Promise<MutationResult>) {
  const form=request.headers.get('content-type')?.startsWith('application/x-www-form-urlencoded');
+ let body:Record<string,unknown>|undefined;
  try {
   if(request.headers.get('origin')!==appOrigin()) throw new AuthError(403,'送信元を確認できません');
-  const result=await operation(await readBody(request));
-  const response=form?NextResponse.redirect(new URL(successPath,appOrigin()),303):NextResponse.json(result.body??{ok:true},{status:result.status??200});
+  body=await readBody(request);
+  const result=await operation(body);
+  const target=new URL(result.redirectTo??successPath,appOrigin());
+  if(target.origin!==appOrigin()) throw new AuthError(400,'移動先が不正です');
+  const response=form?NextResponse.redirect(target,303):NextResponse.json(result.body??{ok:true},{status:result.status??200});
   response.headers.set('Cache-Control','no-store');
   if(result.token!==undefined) response.cookies.set(COOKIE,result.token??'',{httpOnly:true,sameSite:'lax',secure:appOrigin().startsWith('https:'),path:'/',maxAge:result.token?MAX_MS/1000:0});
   return response;
  } catch(error) {
   if(form&&error instanceof AuthError&&error.status!==403){
-   const target=error.status===401&&errorPath!=='/login'?'/login':errorPath;
-   return NextResponse.redirect(new URL(target+'?error='+encodeURIComponent(error.message),appOrigin()),303);
+   const fallback=typeof errorPath==='function'?errorPath(body):errorPath;
+   const target=new URL(error.status===401&&fallback!=='/login'?'/login':fallback,appOrigin());
+   target.searchParams.set('error',error.message);
+   const response=NextResponse.redirect(target,303);
+   response.headers.set('Cache-Control','no-store');
+   return response;
   }
   return errorResponse(error);
  }
