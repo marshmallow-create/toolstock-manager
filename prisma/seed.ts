@@ -5,14 +5,13 @@ if (process.env.ALLOW_LOCAL_SEED !== 'yes') throw new Error('架空データ投�
 try {
   await db.$transaction(async tx => {
     for (const [employee_code, role, name] of [
-      ['A001','WORKER','架空 作業者'], ['S001','STOCK_MANAGER','架空 在庫管理者'],
-      ['P001','PURCHASER','架空 購買担当'], ['ADMIN001','ADMIN','架空 管理者'],
+      ['A001','WORKER','架空 作業者'], ['ADMIN001','ADMIN','架空 管理者'],
     ] as const) await tx.user.upsert({ where: { employee_code }, update: {}, create: { employee_code, role, name } });
     for (const [machine_code,name] of [['FH8800-01','架空マシニングセンタ'],['MC-02','架空MC'],['LATHE-01','架空NC旋盤']])
       await tx.machine.upsert({ where: { machine_code }, update: {}, create: { machine_code,name } });
     for (const location_code of ['A-01','A-02','B-01']) await tx.location.upsert({ where: { location_code }, update: {}, create: { location_code,name: `架空棚 ${location_code}` } });
     const supplier = await tx.supplier.upsert({ where: { supplier_code: 'DEMO-S01' }, update: {}, create: { supplier_code:'DEMO-S01', name:'架空工具商会',email:'demo@example.invalid' } });
-    const actor = await tx.user.findUniqueOrThrow({ where: { employee_code:'S001' } });
+    const actor = await tx.user.findUniqueOrThrow({ where: { employee_code:'ADMIN001' } });
     const shelf = await tx.location.findUniqueOrThrow({ where: { location_code:'A-01' } });
     const definitions = [['T001','超硬ドリルφ10','DRILL','本'],['T002','超硬エンドミルφ16','END_MILL','本'],['T003','旋削チップCNMG120408','INSERT','個'],['T004','スパイラルタップM8','TAP','本']];
     for (const [tool_code,name,category,unit] of definitions) {

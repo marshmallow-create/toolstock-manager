@@ -1,6 +1,6 @@
 import type { Prisma, PrismaClient } from '../../generated/prisma/client';
 import { AuthService, AuthError } from '../auth/service';
-import { codeFields, kind, uuid, code, toolData, policyData, masterData, email, conditionData, unchangedCode, type Input } from './validation';
+import { codeFields, kind, uuid, code, text, integer, toolData, policyData, masterData, email, conditionData, unchangedCode, type Input } from './validation';
 
 export async function audit(tx: Prisma.TransactionClient, actor: string, action: string, entity_type: string, entity_id: string, details: unknown) {
  // 日時・DecimalはJSON文字列に正規化する。呼び出し側で業務項目を限定する。
@@ -19,9 +19,27 @@ export async function conflict<T>(operation: () => Promise<T>) {
 export async function createTool(db: PrismaClient, auth: AuthService, token: string | undefined, input: Input) {
  await auth.authenticate(token, 'masters:write');
  const data = { tool_code: code(input.tool_code), ...toolData(input, true) }, policy = policyData(input, true);
+ const quantity = input.on_hand === undefined ? 0 : integer(input.on_hand, '在庫');
+ const orderQuantity = input.order_quantity === undefined ? 0 : integer(input.order_quantity, '発注数');
+ const shelfText = text(input.shelf_code, '棚番', 32, true), shelfCode = shelfText ? code(shelfText) : '';
+ if (quantity > 0 && !shelfCode) throw new AuthError(400, '在庫を登録する場合は棚番を入力してください');
  return conflict(() => auth.authorized(token, ['masters:write'], async (tx, actor) => {
   const tool = await tx.tool.create({ data });
   await tx.inventoryPolicy.create({ data: { tool_id: tool.id, ...policy } });
+  if (orderQuantity > 0) {
+   const candidate = await tx.reorderCandidate.create({ data: { tool_id: tool.id, status: 'OPEN', quantity: orderQuantity } });
+   await audit(tx, actor.id, 'REORDER_CANDIDATE_CREATED', 'reorder_candidates', candidate.id, { after: candidate });
+  }
+  if (shelfCode) {
+   const existing = await tx.location.findUnique({ where: { location_code: shelfCode } });
+   if (existing && !existing.active) throw new AuthError(409, '有効な棚番を入力してください');
+   const location = existing ?? await tx.location.create({ data: { location_code: shelfCode, name: shelfCode } });
+   if (!existing) await audit(tx, actor.id, 'MASTER_CREATED', 'locations', location.id, { after: location });
+   const stock = await tx.stockBalance.create({ data: { tool_id: tool.id, location_id: location.id, on_hand: quantity } });
+   const key = 'tool-registration:' + tool.id;
+   if (quantity > 0) await tx.inventoryTransaction.create({ data: { tool_id: tool.id, location_id: location.id, actor_user_id: actor.id, type: 'RECEIVE', quantity, idempotency_key: key, reason: '工具登録時の初期在庫' } });
+   await audit(tx, actor.id, 'INITIAL_STOCK_REGISTERED', 'stock_balances', key, { stock_balance_id: stock.id, tool_id: tool.id, location_id: location.id, quantity });
+  }
   await audit(tx, actor.id, 'TOOL_CREATED', 'tools', tool.id, { after: data, policy });
   return tool;
  }));

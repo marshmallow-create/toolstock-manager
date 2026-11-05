@@ -14,7 +14,7 @@ try {
  await db.$transaction(async tx=>{
   await tx.$executeRaw`LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE`;
   const actor=await tx.user.findUniqueOrThrow({where:{employee_code:'ADMIN001'}});
-  for(const employee_code of ['A001','S001','P001','ADMIN001']){
+  for(const employee_code of ['A001','ADMIN001']){
    const user=await tx.user.findUniqueOrThrow({where:{employee_code}});
    if(user.password_hash) continue;
    const password=randomBytes(24).toString('base64url');

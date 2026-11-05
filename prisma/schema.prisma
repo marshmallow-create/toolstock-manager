@@ -7,8 +7,6 @@ datasource db {
 }
 enum Role {
  WORKER
- STOCK_MANAGER
- PURCHASER
  ADMIN
 }
 enum TransactionType {
@@ -54,6 +52,8 @@ model Tool {
  id String @id @default(uuid()) @db.Uuid
  tool_code String @unique
  name String
+ department String @default("")
+ unit_price Decimal? @db.Decimal(14, 2)
  category String
  manufacturer String
  model String

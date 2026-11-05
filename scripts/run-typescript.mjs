@@ -5,6 +5,8 @@ import { resolve } from 'node:path';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const targets = {
+  permissions: { entry: 'tests/permissions.test.ts', args: ['--test'] },
+  'roles-migration': { entry: 'tests/roles-migration.test.ts', args: ['--test'] },
   inventory: { entry: 'tests/inventory.test.ts', args: ['--test'] },
   'inventory-http': { entry: 'tests/inventory-http.test.ts', args: ['--test'] },
   seed: { entry: 'prisma/seed.ts', args: [] },

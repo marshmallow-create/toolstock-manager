@@ -33,7 +33,7 @@ after(async () => { if (server && server.exitCode === null) { server.kill(); awa
 test('在庫APIは匿名を拒否し、全ロールで履歴を参照できる', async () => {
  for (const path of ['/api/history', '/api/history/' + randomUUID()]) assert.equal((await request(path)).status, 401);
  for (const action of ['issue', 'receive', 'adjust', 'reverse']) assert.equal((await post('/api/inventory/' + action, undefined, {})).status, 401);
- for (const role of ['WORKER', 'STOCK_MANAGER', 'PURCHASER', 'ADMIN']) {
+ for (const role of ['WORKER', 'ADMIN']) {
   const response = await request('/api/history', role); assert.equal(response.status, 200); assert.match(response.headers.get('cache-control') ?? '', /no-store/);
   const data = await response.json(); assert.equal(data.pageSize, 50); assert.ok(Array.isArray(data.items));
  }
@@ -50,8 +50,8 @@ test('出庫JSONは確定残高を返し、再送で履歴と在庫を増減さ�
 });
 
 test('在庫書込は権限・Origin・数量・設備・入力形式を検証する', async () => {
- assert.equal((await post('/api/inventory/issue', 'PURCHASER', issueInput())).status, 403);
- for (const role of ['WORKER', 'PURCHASER']) for (const action of ['receive', 'adjust', 'reverse']) assert.equal((await post('/api/inventory/' + action, role, {})).status, 403);
+ assert.equal((await post('/api/inventory/issue', 'ADMIN', issueInput())).status, 200);
+ for (const role of ['WORKER']) for (const action of ['receive', 'adjust', 'reverse']) assert.equal((await post('/api/inventory/' + action, role, {})).status, 403);
  assert.equal((await post('/api/inventory/issue', 'WORKER', issueInput(), 'https://evil.invalid')).status, 403);
  for (const quantity of [0, -1, 1.5, '1e2', true, '']) assert.equal((await post('/api/inventory/issue', 'WORKER', { ...issueInput(), quantity })).status, 400);
  assert.equal((await post('/api/inventory/issue', 'WORKER', { ...issueInput(), machine_id: '' })).status, 400);
@@ -61,7 +61,7 @@ test('在庫書込は権限・Origin・数量・設備・入力形式を検証�
 });
 
 test('入庫・棚卸・逆取引が保存され、本人には管理者による取消が見える', async () => {
- const received = await post('/api/inventory/receive', 'STOCK_MANAGER', { request_key: randomUUID(), tool_id: toolId, location_id: locationId, quantity: 4, reason: '手動補充' }); assert.equal(received.status, 200);
+ const received = await post('/api/inventory/receive', 'ADMIN_ALT', { request_key: randomUUID(), tool_id: toolId, location_id: locationId, quantity: 4, reason: '手動補充' }); assert.equal(received.status, 200);
  const stock = await fixture.db.stockBalance.findUniqueOrThrow({ where: { tool_id_location_id: { tool_id: toolId, location_id: locationId } } });
  const adjusted = await post('/api/inventory/adjust', 'ADMIN', { request_key: randomUUID(), tool_id: toolId, location_id: locationId, counted_quantity: stock.on_hand + 2, expected_on_hand: stock.on_hand, expected_reserved: stock.reserved, reason: '実棚確認' }); assert.equal(adjusted.status, 200); assert.equal((await adjusted.json()).transaction.quantity, 2);
  const issued = await post('/api/inventory/issue', 'WORKER', issueInput()); const original = (await issued.json()).transaction;
@@ -84,8 +84,8 @@ test('本人履歴は他人の取引・ID指定を隠し、検索入力を検証
 
 test('実画面の出庫フォームは設備を必須にし、棚の自動選択と期待残高を保持する', async () => {
  for (const path of ['/inventory/issue', '/inventory/receive', '/inventory/adjust', '/history']) { const response = await request(path); assert.equal(response.status, 307); assert.match(response.headers.get('location') ?? '', /login/); }
- for (const role of ['WORKER', 'PURCHASER']) for (const path of ['/inventory/receive', '/inventory/adjust']) assert.equal((await request(path, role)).status, 307);
- assert.equal((await request('/inventory/issue', 'PURCHASER')).status, 307);
+ for (const role of ['WORKER']) for (const path of ['/inventory/receive', '/inventory/adjust']) assert.equal((await request(path, role)).status, 307);
+ assert.equal((await request('/inventory/issue', 'ADMIN')).status, 200);
  const response = await request('/inventory/issue?tool_id=' + toolId, 'WORKER'); assert.equal(response.status, 200); const html = await response.text();
  assert.match(html, /name="machine_id"[^>]*required/); const locationSelect = html.match(/<select\b[^>]*name="location_id"[^>]*>(.*?)<\/select>/s)?.[1] ?? ""; assert.ok(locationSelect.includes('value="' + locationId + '"')); assert.match(locationSelect, /<option[^>]*selected=""/); assert.match(html, /出庫後の見込み/); assert.match(html, /履歴検証棚/);
  const adjust = await request('/inventory/adjust?tool_id=' + toolId, 'ADMIN'); const adjustHtml = await adjust.text(); assert.match(adjustHtml, /name="expected_on_hand"/); assert.match(adjustHtml, /name="expected_reserved"/);
@@ -112,7 +112,7 @@ test('HTML入出庫・棚卸・取消は確定履歴へ303で移動し、エラ�
 
 test('空の履歴検索条件を許可し、失効したセッションは在庫を変更できない', async () => {
  const history = await request('/api/history?from=&to=&tool_id=&machine_id=&actor_user_id=&type=', 'WORKER'); assert.equal(history.status, 200);
- const token = (await fixture.auth.login('STOCK_MANAGER', fixture.password)).token; await fixture.auth.logout(token);
+ const token = (await fixture.auth.login('ADMIN_ALT', fixture.password)).token; await fixture.auth.logout(token);
  const before = await fixture.db.inventoryTransaction.count();
  const response = await request('/api/inventory/issue', undefined, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin, Cookie: 'toolstock_session=' + token }, body: JSON.stringify(issueInput()) }); assert.equal(response.status, 401);
  assert.equal(await fixture.db.inventoryTransaction.count(), before);

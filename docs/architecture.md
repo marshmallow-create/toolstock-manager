@@ -15,7 +15,9 @@ Next.js 16 / React 19 / Tailwind 4 / Prisma 7。Prisma 7では接続URLとseed�
 
 ## Phase 2
 
-認証は外部サービスを使わず、src/lib/auth/crypto.ts（暗号処理）、permissions.ts（仕様の権限表）、service.ts（DBセッション・管理トランザクション）、server.ts（Next.jsのCookie/Origin/ページ・API応答）に分離。ブラウザへ渡すユーザーDTOはid/社員ID/氏名/ロール/activeのみ。各ページ・ルートで認証・認可する。Cookieの存在だけで許可しない。ダッシュボードは権限の案内を表示し、業務操作は後続フェーズに残す。
+現在の認可は作業者（WORKER）と管理者（ADMIN）の2ロールに統一する。作業者は在庫参照・出庫・本人の出庫とその管理者による取消の履歴を利用できる。管理者は全管理操作・全履歴・単価情報へアクセスできる。追加マイグレーションで廃止したロールをWORKERへ移行し、対象セッションを失効させる。既存ID・パスワード・履歴は維持する。
+
+認証は外部サービスを使わず、src/lib/auth/crypto.ts（暗号処理）、permissions.ts（仕様の権限表）、service.ts（DBセッション・管理トランザクション）、server.ts（Next.jsのCookie/Origin/ページ・API応答）に分離。ブラウザへ渡すユーザーDTOはid/社員ID/氏名/ロール/activeのみ。各ページ・ルートで認証・認可する。Cookieの存在だけで許可しない。マイページは権限の案内を表示し、業務操作は後続フェーズに残す。
 
 ## Phase 3
 

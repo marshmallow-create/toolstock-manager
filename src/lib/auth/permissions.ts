@@ -1,15 +1,15 @@
-export const roleLabels = { WORKER:'作業者', STOCK_MANAGER:'在庫管理者', PURCHASER:'購買担当', ADMIN:'管理者' } as const;
+export const roleLabels = { WORKER:'作業者', ADMIN:'管理者' } as const;
 export type Role = keyof typeof roleLabels;
 export const permissions: Record<string, readonly Role[]> = {
- 'inventory:read':['WORKER','STOCK_MANAGER','PURCHASER','ADMIN'],
- 'inventory:issue':['WORKER','STOCK_MANAGER','ADMIN'],
- 'history:own':['WORKER','STOCK_MANAGER','PURCHASER','ADMIN'],
- 'history:all':['STOCK_MANAGER','PURCHASER','ADMIN'],
- 'inventory:receive':['STOCK_MANAGER','ADMIN'],
- 'inventory:adjust':['STOCK_MANAGER','ADMIN'],
- 'masters:write':['STOCK_MANAGER','ADMIN'],
- 'orders:read':['STOCK_MANAGER','PURCHASER','ADMIN'],
- 'orders:approve':['PURCHASER','ADMIN'],
+ 'inventory:read':['WORKER','ADMIN'],
+ 'inventory:issue':['WORKER','ADMIN'],
+ 'history:own':['WORKER','ADMIN'],
+ 'history:all':['ADMIN'],
+ 'inventory:receive':['ADMIN'],
+ 'inventory:adjust':['ADMIN'],
+ 'masters:write':['ADMIN'],
+ 'orders:read':['ADMIN'],
+ 'orders:approve':['ADMIN'],
  'users:manage':['ADMIN'],
 };
 export const permissionLabels:Record<string,string> = {

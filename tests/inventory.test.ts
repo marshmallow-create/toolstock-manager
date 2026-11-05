@@ -37,7 +37,7 @@ test('出庫はセッションの操作者で残高・履歴・監査を一体�
 
 test('2人の同時出庫ではavailableを超える片方だけ拒否し負在庫にしない',async()=>{
  const s=await stock(10,2);
- const results=await Promise.allSettled([service.issue(token('WORKER'),issueInput(s,6)),service.issue(token('STOCK_MANAGER'),issueInput(s,6))]);
+ const results=await Promise.allSettled([service.issue(token('WORKER'),issueInput(s,6)),service.issue(token('ADMIN_ALT'),issueInput(s,6))]);
  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
  const rejected=results.find(r=>r.status==='rejected');assert.ok(rejected?.status==='rejected'&&status(409)(rejected.reason));
  assert.equal((await balance(s)).on_hand,4);assert.equal((await balance(s)).reserved,2);
@@ -51,14 +51,14 @@ test('同キーの同時再送は同じ確定結果となり、異内容・別�
  await service.receive(token(),{tool_id:s.tool.id,location_id:s.location.id,quantity:1,reason:'別入庫',request_key:randomUUID()});
  assert.deepEqual(await service.issue(token(),input),first);
  for(const changed of [{...input,quantity:3},{...input,reason:'変更'},{...input,tool_id:other.tool.id},{...input,machine_id:other.machine.id}])await assert.rejects(service.issue(token(),changed),status(409));
- await assert.rejects(service.issue(token('STOCK_MANAGER'),input),status(409));
+ await assert.rejects(service.issue(token('ADMIN_ALT'),input),status(409));
  await assert.rejects(service.receive(token(),{...input,reason:'架空作業'}),status(409));
  assert.equal(await f.db.inventoryTransaction.count({where:{tool_id:s.tool.id,type:'ISSUE'}}),1);
 });
 
 test('同じキーを別工具へ同時利用しても一度しか成立しない',async()=>{
  const a=await stock(),b=await stock(),request_key=randomUUID();
- const results=await Promise.allSettled([service.issue(token('WORKER'),{...issueInput(a),request_key}),service.issue(token('STOCK_MANAGER'),{...issueInput(b),request_key})]);
+ const results=await Promise.allSettled([service.issue(token('WORKER'),{...issueInput(a),request_key}),service.issue(token('ADMIN_ALT'),{...issueInput(b),request_key})]);
  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
  const rejected=results.find(r=>r.status==='rejected');assert.ok(rejected?.status==='rejected'&&status(409)(rejected.reason));
 });
@@ -93,7 +93,7 @@ test('手動入庫は未登録棚を作成し、同じ棚への同時入庫と�
  const s=await stock(0);
  const shelf=await masters.createMaster(token(),'locations',{location_code:'RECEIVE-'+(++seq),name:'入庫先'});
  const input={tool_id:s.tool.id,location_id:shelf.id,quantity:3,reason:'架空追加',request_key:randomUUID()};
- const [a]=await Promise.all([service.receive(token('ADMIN'),input),service.receive(token('STOCK_MANAGER'),{...input,quantity:4,request_key:randomUUID()})]);
+ const [a]=await Promise.all([service.receive(token('ADMIN'),input),service.receive(token('ADMIN_ALT'),{...input,quantity:4,request_key:randomUUID()})]);
  assert.deepEqual(await service.receive(token(),input),a);
  const row=await f.db.stockBalance.findUniqueOrThrow({where:{tool_id_location_id:{tool_id:s.tool.id,location_id:shelf.id}}});
  assert.equal(row.on_hand,7);assert.equal(row.reserved,0);
@@ -135,7 +135,7 @@ test('逆取引は元履歴を保持して逆符号・元設備・訂正者・�
 
 test('同時の二重取消は片方のみ成功し、消費済み入庫や引当割れの取消を拒否',async()=>{
  const s=await stock(),original=await service.issue(token('WORKER'),issueInput(s,2));
- const results=await Promise.allSettled(['ADMIN','STOCK_MANAGER'].map(role=>service.reverse(token(role),{transaction_id:original.id,reason:'架空訂正',request_key:randomUUID()})));
+ const results=await Promise.allSettled(['ADMIN','ADMIN_ALT'].map(role=>service.reverse(token(role),{transaction_id:original.id,reason:'架空訂正',request_key:randomUUID()})));
  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
  const r=results.find(r=>r.status==='rejected');assert.ok(r?.status==='rejected'&&status(409)(r.reason));
  const small=await stock(0),receipt=await service.receive(token(),{...issueInput(small,5),reason:'架空入庫'});
@@ -162,7 +162,7 @@ test('本人履歴は自分の出庫と管理者によるその逆取引のみ�
  assert.equal(list.total,2);assert.ok(list.items.some(item=>item.id===own.id));assert.ok(list.items.some(item=>item.id===reversed.id));
  await assert.rejects(service.historyDetail(token('WORKER'),other.id),status(404));
  await assert.rejects(service.listHistory(token('WORKER'),{actor_user_id:f.users.ADMIN}),status(403));
- assert.equal((await service.listHistory(token('PURCHASER'),{tool_id:s.tool.id})).total,4);
+ assert.equal((await service.listHistory(token('ADMIN'),{tool_id:s.tool.id})).total,4);
  const text=JSON.stringify(await service.historyDetail(token('WORKER'),reversed.id));assert.ok(!text.includes('password_hash'));assert.ok(!text.includes('token_hash'));assert.ok(!text.includes('unit_price'));
  assert.equal((await service.historyOptions(token('WORKER'))).actors.length,1);
 });
@@ -182,16 +182,16 @@ test('履歴は50件単位で同時刻ならID降順、範囲外ページは空'
  assert.equal((await service.listHistory(token(),{tool_id:s.tool.id,page:'999999999999'})).items.length,0);
 });
 
-test('権限・失効を再送でも確認し購買担当と作業者の管理操作を拒否',async()=>{
+test('管理者の降格後は旧セッションと作業者による入庫の再送を拒否',async()=>{
  const s=await stock();
  for(const method of ['receive','adjust','reverse'] as const)await assert.rejects(service[method](token('WORKER'),{}),status(403));
- await assert.rejects(service.issue(token('PURCHASER'),issueInput(s)),status(403));
+ assert.equal((await service.issue(token('ADMIN'),issueInput(s))).type,'ISSUE');
  await assert.rejects(service.listHistory(undefined,{}),status(401));
- const employee_code='INV-TEMP',user=await f.auth.createUser(token(),{employee_code,name:'架空作業者',role:'WORKER',password:f.password});
- const session=(await f.auth.login(employee_code,f.password)).token,input=issueInput(s);await service.issue(session,input);
- await f.auth.updateUser(token(),user.id,{name:'架空',role:'PURCHASER',active:true});
- await assert.rejects(service.issue(session,input),status(401));
- const next=(await f.auth.login(employee_code,f.password)).token;await assert.rejects(service.issue(next,input),status(403));
+ const employee_code='INV-TEMP',user=await f.auth.createUser(token(),{employee_code,name:'架空管理者',role:'ADMIN',password:f.password});
+ const session=(await f.auth.login(employee_code,f.password)).token,input={...issueInput(s),reason:'降格前入庫'};await service.receive(session,input);
+ await f.auth.updateUser(token(),user.id,{name:'架空',role:'WORKER',active:true});
+ await assert.rejects(service.receive(session,input),status(401));
+ const next=(await f.auth.login(employee_code,f.password)).token;await assert.rejects(service.receive(next,input),status(403));
 });
 
 test('監査保存失敗なら残高と取引履歴を全てロールバック',async()=>{

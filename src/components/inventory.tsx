@@ -43,7 +43,7 @@ export async function InventoryPage({ mode, search }: { mode: 'issue' | 'receive
   {tool && <section className={panelClass}><h2 className="mb-2 text-xl font-bold">{tool.tool_code} / {tool.name}</h2><p className="mb-5"><Link href={'/tools/' + tool.id} className="underline">工具詳細・最新の在庫を確認</Link></p>
    {!tool.active ? <p>無効な工具には登録できません。</p> : !locations.length ? <p>選択できる有効な保管場所がありません。{mode !== 'receive' && '未登録の棚は、初期在庫登録または手動入庫から開始してください。'}</p> : <>
     {mode === 'receive' && <p className="mb-5 text-sm">発注書にひも付かない手動入庫です。補充した理由を記録してください。</p>}
-    {mode === 'issue' && !machines.length && <p role="alert" className="mb-4 text-red-800">有効な設備がありません。在庫管理者に設備登録を依頼してください。</p>}
+    {mode === 'issue' && !machines.length && <p role="alert" className="mb-4 text-red-800">有効な設備がありません。管理者に設備登録を依頼してください。</p>}
     <InventoryForm key={tool.id + mode} mode={mode} tool={{ id: tool.id, unit: tool.unit }} locations={locations.map(location => ({ id: location.id, location_code: masterCode(location), name: location.name }))} stocks={tool.stocks.map(stock => ({ location_id: stock.location_id, on_hand: stock.on_hand, reserved: stock.reserved }))} machines={machines.map(machine => ({ id: machine.id, machine_code: masterCode(machine), name: machine.name }))} requestKey={randomUUID()} />
    </>}
   </section>}

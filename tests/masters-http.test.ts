@@ -37,10 +37,10 @@ after(async () => {
  await fixture?.close();
 });
 
-test('マスタAPIは匿名401、全4ロールの在庫参照、購買担当の条件閲覧、作業者の単価非公開', async () => {
+test('マスタAPIは匿名401、全2ロールの在庫参照、管理者の条件閲覧、作業者の単価非公開', async () => {
  for (const path of ['/api/tools', '/api/tools/' + toolId, '/api/masters/locations']) assert.equal((await request(path)).status, 401);
- for (const role of ['WORKER', 'STOCK_MANAGER', 'PURCHASER', 'ADMIN']) {
-  const response = await request('/api/tools?q=http-model', role); assert.equal(response.status, 200);
+ for (const role of ['WORKER', 'ADMIN']) {
+  const response = await request('/api/tools?q=http-tool', role); assert.equal(response.status, 200);
   assert.match(response.headers.get('cache-control') ?? '', /no-store/);
   assert.equal((await response.json()).tools[0].id, toolId);
   const detail = await request('/api/tools/' + toolId, role); assert.equal(detail.status, 200);
@@ -49,11 +49,11 @@ test('マスタAPIは匿名401、全4ロールの在庫参照、購買担当の�
   else assert.equal(data.tool.supplier_items[0].unit_price, '1234.56');
  }
  assert.equal((await request('/api/masters/suppliers', 'WORKER')).status, 403);
- assert.equal((await request('/api/masters/suppliers', 'PURCHASER')).status, 200);
+ assert.equal((await request('/api/masters/suppliers', 'ADMIN')).status, 200);
 });
 
 test('マスタAPIの書込権限、Origin、入力検証、重複コード、未存在ID', async () => {
- for (const role of ['WORKER', 'PURCHASER']) {
+ for (const role of ['WORKER']) {
   assert.equal((await post('/api/tools', role, base)).status, 403);
   assert.equal((await post('/api/masters/locations', role, { location_code: 'NO', name: '禁止' })).status, 403);
   assert.equal((await post('/api/tools/' + toolId + '/initial-stock', role, { location_id: locationId, quantity: 1, request_key: randomUUID() })).status, 403);
@@ -70,11 +70,11 @@ test('マスタAPIの書込権限、Origin、入力検証、重複コード、�
 test('APIから初期在庫を登録し、再送・異内容再送・別キー再登録を制御する', async () => {
  const path = '/api/tools/' + toolId + '/initial-stock';
  const input = { location_id: locationId, quantity: 7, request_key: randomUUID() };
- const response = await post(path, 'STOCK_MANAGER', input); assert.equal(response.status, 201);
+ const response = await post(path, 'ADMIN_ALT', input); assert.equal(response.status, 201);
  const first = await response.json();
- const replay = await post(path, 'STOCK_MANAGER', input); assert.equal(replay.status, 201); assert.deepEqual(await replay.json(), first);
- assert.equal((await post(path, 'STOCK_MANAGER', { ...input, quantity: 8 })).status, 409);
- assert.equal((await post(path, 'STOCK_MANAGER', { ...input, request_key: randomUUID() })).status, 409);
+ const replay = await post(path, 'ADMIN_ALT', input); assert.equal(replay.status, 201); assert.deepEqual(await replay.json(), first);
+ assert.equal((await post(path, 'ADMIN_ALT', { ...input, quantity: 8 })).status, 409);
+ assert.equal((await post(path, 'ADMIN_ALT', { ...input, request_key: randomUUID() })).status, 409);
  assert.equal(await fixture.db.inventoryTransaction.count({ where: { tool_id: toolId } }), 1);
 });
 
@@ -82,22 +82,22 @@ test('工具検索・詳細・編集・マスタ画面は認証と権限で表�
  for (const path of ['/tools', '/tools/' + toolId, '/tools/new', '/tools/' + toolId + '/edit', '/admin/masters']) {
   const response = await request(path); assert.equal(response.status, 307, path); assert.match(response.headers.get('location') ?? '', /login/);
  }
- const list = await request('/tools?q=HTTP-MODEL', 'WORKER'); assert.equal(list.status, 200); assert.match(await list.text(), /HTTP架空ドリル/);
+ const list = await request('/tools?tool_code=HTTP-TOOL&name=' + encodeURIComponent('架空ドリル'), 'WORKER'); assert.equal(list.status, 200); assert.match(await list.text(), /HTTP架空ドリル/);
  const empty = await request('/tools?q=DOES-NOT-EXIST', 'WORKER'); assert.match(await empty.text(), /該当する工具はありません/);
  const detail = await request('/tools/' + toolId, 'WORKER'); assert.equal(detail.status, 200);
  const html = await detail.text(); assert.match(html, /HTTP架空棚/); assert.ok(!html.includes('1234.56')); assert.ok(!html.includes('HTTP架空商社'));
- const purchaser = await request('/tools/' + toolId, 'PURCHASER'); assert.match(await purchaser.text(), /1234.56/);
- for (const role of ['WORKER', 'PURCHASER']) {
+ const administrator = await request('/tools/' + toolId, 'ADMIN'); assert.match(await administrator.text(), /1234.56/);
+ for (const role of ['WORKER']) {
   for (const path of ['/admin/masters', '/tools/new', '/tools/' + toolId + '/edit']) assert.equal((await request(path, role)).status, 307);
  }
- assert.equal((await request('/admin/masters', 'STOCK_MANAGER')).status, 200);
+ assert.equal((await request('/admin/masters', 'ADMIN_ALT')).status, 200);
  assert.equal((await request('/tools/' + randomUUID(), 'ADMIN')).status, 404);
  assert.equal((await request('/tools/not-uuid', 'ADMIN')).status, 404);
- const dashboard = await request('/dashboard', 'STOCK_MANAGER'); assert.match(await dashboard.text(), /href="\/tools"/);
+ const dashboard = await request('/dashboard', 'ADMIN_ALT'); assert.match(await dashboard.text(), /href="\/tools"/);
 });
 
 test('HTMLフォームで工具・マスタ・購買条件・初期在庫を保存し303で結果へ移動する', async () => {
- const created = await form('/api/tools', 'STOCK_MANAGER', { ...base, tool_code: 'FORM-TOOL' }); assert.equal(created.status, 303);
+ const created = await form('/api/tools', 'ADMIN_ALT', { ...base, tool_code: 'FORM-TOOL' }); assert.equal(created.status, 303);
  assert.match(created.headers.get('location') ?? '', /\/tools\?saved=1/);
  const tool = await fixture.db.tool.findUniqueOrThrow({ where: { tool_code: 'FORM-TOOL' } });
  const updated = await form('/api/tools/' + tool.id, 'ADMIN', { ...base, tool_code: 'FORM-TOOL', name: 'フォーム更新工具', active: 'true' }); assert.equal(updated.status, 303);
@@ -114,8 +114,27 @@ test('HTMLフォームで工具・マスタ・購買条件・初期在庫を保�
  const edit = await request('/tools/' + tool.id + '/edit', 'ADMIN'); assert.equal(edit.status, 200); assert.match(await edit.text(), /フォーム更新工具/);
 });
 
+test('新規登録画面の9項目から登録し部門・単価・在庫・棚番を一覧に表示する', async () => {
+ const page = await request('/tools/new', 'ADMIN'); assert.equal(page.status, 200);
+ const html = await page.text();
+ for (const label of ['品目コード', '品目名', '在庫', '発注済み', '発注ライン', '発注数', '単価', '部門', '棚番']) assert.ok(html.includes(label), label);
+ assert.ok(!html.includes('工具全体の在庫方針'));
+ const created = await form('/api/tools', 'ADMIN', { tool_code: 'LIST-FORM', name: '一覧形式の工具', on_hand: '17', reorder_point: '4', order_quantity: '6', unit_price: '456.78', department: '組立部', shelf_code: 'SHELF-FORM' });
+ assert.equal(created.status, 303);
+ assert.equal(created.headers.get('location'), origin + '/tools?saved=1');
+ const listed = await request('/api/tools?tool_code=LIST-FORM', 'ADMIN');
+ const row = (await listed.json()).tools[0];
+ assert.equal(row.on_hand, 17); assert.equal(row.reorder_point, 4); assert.equal(row.unit_price, '456.78'); assert.equal(row.order_quantity, 6); assert.equal(row.on_order, 0);
+ assert.equal(row.department, '組立部'); assert.deepEqual(row.shelf_codes, ['SHELF-FORM']);
+ const list = await request('/tools?tool_code=LIST-FORM', 'ADMIN');
+ const listHtml = await list.text();
+ for (const value of ['一覧形式の工具', '組立部', 'SHELF-FORM', '456.78']) assert.ok(listHtml.includes(value));
+ const worker = await request('/api/tools?tool_code=LIST-FORM', 'WORKER');
+ assert.equal((await worker.json()).tools[0].unit_price, null);
+});
+
 test('失効したセッションではマスタ更新を拒否する', async () => {
- const token = (await fixture.auth.login('STOCK_MANAGER', fixture.password)).token;
+ const token = (await fixture.auth.login('ADMIN_ALT', fixture.password)).token;
  await fixture.auth.logout(token);
  const response = await request('/api/tools', undefined, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin, Cookie: 'toolstock_session=' + token }, body: JSON.stringify({ ...base, tool_code: 'EXPIRED' }) });
  assert.equal(response.status, 401);

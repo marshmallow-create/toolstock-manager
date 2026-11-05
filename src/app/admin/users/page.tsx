@@ -8,7 +8,7 @@ export default async function Users({searchParams}:{searchParams:Promise<{error?
  const users=await auth().listUsers((await cookies()).get(COOKIE)?.value);
  const {error,saved}=await searchParams;
  return <main className="mx-auto max-w-5xl p-6 md:p-12">
-  <Link href="/dashboard" className="underline">ダッシュボードへ</Link><h1 className="my-6 text-3xl font-bold">ユーザー・権限管理</h1>
+  <Link href="/dashboard" className="underline">マイページへ</Link><h1 className="my-6 text-3xl font-bold">ユーザー・権限管理</h1>
   {error&&<p role="alert" className="mb-4 rounded bg-red-50 p-4 text-red-800">{error.slice(0,200)}</p>}
   {saved&&<p role="status" className="mb-4 rounded bg-green-50 p-4 text-green-900">保存しました。</p>}
   <section className="mb-8 rounded-xl bg-white p-6"><h2 className="mb-4 text-xl font-bold">ユーザー登録</h2>

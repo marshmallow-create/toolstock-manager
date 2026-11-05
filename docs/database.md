@@ -6,7 +6,7 @@
 
 | モデル | 役割 |
 | --- | --- |
-| users | 社員コード一意、4ロール、無効化。認証資格情報はPhase 2 |
+| users | 社員コード一意、2ロール（WORKER / ADMIN）、無効化。認証資格情報はPhase 2 |
 | tools / machines / locations / suppliers | 工具・設備・棚・仕入先。コード一意、active保持 |
 | stock_balances | 工具×棚一意、実在庫・引当 |
 | inventory_transactions | 符号付き数量。出庫は負数、入庫は正数。操作者必須、出庫時設備必須。逆取引は元取引と理由必須 |

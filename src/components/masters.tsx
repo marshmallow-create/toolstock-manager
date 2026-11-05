@@ -5,8 +5,8 @@ export const buttonClass = 'rounded bg-blue-900 px-5 py-3 text-white disabled:op
 export const panelClass = 'rounded-xl bg-white p-5 shadow-sm';
 export type Search = Record<string, string | string[] | undefined>;
 export const queryText = (value: unknown) => typeof value === 'string' ? value : '';
-export function Shell({ title, children }: { title: string; children: ReactNode }) {
- return <main className="mx-auto max-w-6xl p-5 md:p-10"><nav aria-label="メインナビゲーション" className="mb-6 flex flex-wrap gap-5 text-sm underline"><Link href="/dashboard">ダッシュボード</Link><Link href="/tools">工具一覧</Link></nav><h1 className="mb-6 text-3xl font-bold">{title}</h1>{children}</main>;
+export function Shell({ title, children, navigation }: { title: string; children: ReactNode; navigation?: ReactNode }) {
+ return <main className="mx-auto max-w-6xl p-5 md:p-10"><nav aria-label="メインナビゲーション" className="mb-6 flex flex-wrap gap-5 text-sm underline">{navigation ?? <><Link href="/dashboard">マイページ</Link><Link href="/tools">工具一覧</Link></>}</nav><h1 className="mb-6 text-3xl font-bold">{title}</h1>{children}</main>;
 }
 export function Messages({ search }: { search: Search }) {
  return <>{queryText(search.error) && <p role="alert" className="mb-5 rounded bg-red-50 p-4 text-red-800">{queryText(search.error).slice(0, 200)}</p>}{queryText(search.saved) && <p role="status" className="mb-5 rounded bg-green-50 p-4 text-green-900">保存しました。</p>}</>;
@@ -22,9 +22,22 @@ export function Active({ value = true }: { value?: boolean }) {
 }
 type ToolValues = { tool_code: string; name: string; category: string; manufacturer: string; model: string; unit: string; active: boolean; policy?: { safety_stock: number; reorder_point: number; target_stock: number } | null };
 export function ToolForm({ action, tool }: { action: string; tool?: ToolValues }) {
+ if (!tool) return <form action={action} method="post" className={'grid gap-4 sm:grid-cols-2 lg:grid-cols-3 ' + panelClass}>
+  <Field label="品目コード" name="tool_code" required maxLength={32} pattern="[A-Za-z0-9_\x2D]+" />
+  <Field label="品目名" name="name" required maxLength={100} />
+  <NumberField label="在庫" name="on_hand" defaultValue={0} />
+  <label className="grid gap-1">発注済み<output className="rounded border border-slate-200 bg-slate-50 p-2 text-slate-600" title="発注データから自動集計します">0</output></label>
+  <NumberField label="発注ライン" name="reorder_point" defaultValue={0} />
+  <NumberField label="発注数" name="order_quantity" defaultValue={0} />
+  <Field label="単価" name="unit_price" required inputMode="decimal" pattern="[0-9]{1,12}(\.[0-9]{1,2})?" maxLength={15} defaultValue="0.00" />
+  <Field label="部門" name="department" maxLength={100} />
+  <Field label="棚番" name="shelf_code" maxLength={32} pattern="[A-Za-z0-9_\x2D]+" />
+  <p className="text-sm text-slate-600 sm:col-span-2 lg:col-span-3">発注済みは自動集計されます。発注数は発注候補として登録されます。在庫を登録する場合は棚番を入力してください。</p>
+  <button className={buttonClass + ' sm:col-span-2 lg:col-span-3'}>工具を登録する</button>
+ </form>;
  return <form action={action} method="post" className={'grid gap-4 sm:grid-cols-2 ' + panelClass}>
-  <Field label="工具番号" name="tool_code" required maxLength={32} pattern="[A-Za-z0-9_\x2D]+" defaultValue={tool?.tool_code} readOnly={!!tool} />
-  <Field label="工具名" name="name" required maxLength={100} defaultValue={tool?.name} />
+  <Field label="品目コード" name="tool_code" required maxLength={32} pattern="[A-Za-z0-9_\x2D]+" defaultValue={tool?.tool_code} readOnly={!!tool} />
+  <Field label="品目名" name="name" required maxLength={100} defaultValue={tool?.name} />
   <Field label="分類" name="category" required maxLength={64} defaultValue={tool?.category} />
   <Field label="メーカー（任意）" name="manufacturer" maxLength={100} defaultValue={tool?.manufacturer} />
   <Field label="型番（任意）" name="model" maxLength={100} defaultValue={tool?.model} />

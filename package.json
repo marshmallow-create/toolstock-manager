@@ -19,11 +19,13 @@
     "auth:setup-dev": "node scripts/run-typescript.mjs setup",
     "test:auth": "node scripts/run-typescript.mjs auth",
     "test:http": "node scripts/run-typescript.mjs http",
-    "test": "npm run test:db && npm run test:auth && npm run test:masters && npm run test:inventory && npm run build && npm run test:http && npm run test:masters-http && npm run test:inventory-http",
+    "test": "npm run test:permissions && npm run test:roles-migration && npm run test:db && npm run test:auth && npm run test:masters && npm run test:inventory && npm run build && npm run test:http && npm run test:masters-http && npm run test:inventory-http",
     "test:masters": "node scripts/run-typescript.mjs masters",
     "test:masters-http": "node scripts/run-typescript.mjs masters-http",
     "test:inventory": "node scripts/run-typescript.mjs inventory",
-    "test:inventory-http": "node scripts/run-typescript.mjs inventory-http"
+    "test:inventory-http": "node scripts/run-typescript.mjs inventory-http",
+    "test:permissions": "node scripts/run-typescript.mjs permissions",
+    "test:roles-migration": "node scripts/run-typescript.mjs roles-migration"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.3.0",

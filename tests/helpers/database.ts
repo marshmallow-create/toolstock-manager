@@ -24,10 +24,10 @@ export async function databaseFixture(prefix: string) {
  const password_hash = await hashPassword(password);
  const tokens: Record<string, string> = {};
  const users: Record<string, string> = {};
- for (const role of ['WORKER', 'STOCK_MANAGER', 'PURCHASER', 'ADMIN'] as const) {
-  const user = await db.user.create({ data: { employee_code: role, name: '架空' + role, role, password_hash } });
-  users[role] = user.id;
-  tokens[role] = (await auth.login(role, password)).token;
+ for (const [employee_code, role] of [['WORKER', 'WORKER'], ['ADMIN', 'ADMIN'], ['ADMIN_ALT', 'ADMIN']] as const) {
+  const user = await db.user.create({ data: { employee_code, name: '架空' + role, role, password_hash } });
+  users[employee_code] = user.id;
+  tokens[employee_code] = (await auth.login(employee_code, password)).token;
  }
  return { db, auth, admin, schema, url, password, tokens, users, async close() {
   await db.$disconnect();

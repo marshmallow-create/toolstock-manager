@@ -8,7 +8,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client';
 import { AuthService, AuthError } from '../src/lib/auth/service';
 import { hashPassword, verifyPassword, tokenHash } from '../src/lib/auth/crypto';
-import { permissions, can } from '../src/lib/auth/permissions';
+import { permissions, can, type Role } from '../src/lib/auth/permissions';
 
 const schema = 'auth_test_' + randomUUID().replaceAll('-', '');
 let db: PrismaClient;
@@ -16,8 +16,8 @@ let admin: pg.Client;
 let service: AuthService;
 let now = new Date('2026-11-03T00:00:00Z');
 const password = 'Fictional-test-password-123';
-const codes = ['TEST-A', 'TEST-S', 'TEST-P', 'TEST-ADMIN'];
-const roles = ['WORKER', 'STOCK_MANAGER', 'PURCHASER', 'ADMIN'] as const;
+const codes = ['TEST-A', 'TEST-ADMIN'];
+const roles = ['WORKER', 'ADMIN'] as const;
 
 before(async () => {
   const url = process.env.TEST_DATABASE_URL;
@@ -44,11 +44,9 @@ test('パスワードはsalt付きハッシュで保持し、不正パスワー�
   assert.equal(await verifyPassword(password,'invalid'),false);
   await assert.rejects(hashPassword('short'));
 });
-test('4ロールの全操作が仕様の権限表と一致する',()=>{
+test('2ロールの全操作が仕様の権限表と一致する',()=>{
   const expected = [
     ['inventory:read','inventory:issue','history:own'],
-    ['inventory:read','inventory:issue','history:own','history:all','inventory:receive','inventory:adjust','masters:write','orders:read'],
-    ['inventory:read','history:own','history:all','orders:read','orders:approve'],
     Object.keys(permissions),
   ];
   for(let i=0;i<roles.length;i++) for(const permission of Object.keys(permissions))
@@ -73,22 +71,33 @@ test('無操作30分・最長8時間のセッション失効',async()=>{
   now=new Date(now.getTime()+15*60_000);
   await assert.rejects(service.authenticate(next.token),status(401));
 });
-test('作業者・在庫管理者・購買担当は管理API相当のサービス操作を拒否',async()=>{
-  for(const code of codes.slice(0,3)){
+test('作業者は管理API相当のサービス操作を拒否',async()=>{
+  for(const code of codes.slice(0,1)){
     const {token}=await service.login(code,password);
     await assert.rejects(service.listUsers(token),status(403));
     await assert.rejects(service.createUser(token,{employee_code:'X',name:'X',role:'ADMIN',password}),status(403));
   }
 });
+test('廃止されたロールはユーザー登録と更新で拒否する',async()=>{
+  const {token}=await service.login(codes[1],password);
+  const user=await db.user.findUniqueOrThrow({where:{employee_code:codes[0]}});
+  for(const role of ['STOCK_MANAGER','PURCHASER']){
+    // Exercise invalid runtime input that the TypeScript API correctly excludes.
+    await assert.rejects(service.createUser(token,{employee_code:'RETIRED-'+role,name:'架空',role:role as Role,password}),status(400));
+    await assert.rejects(service.updateUser(token,user.id,{name:user.name,role:role as Role,active:true}),status(400));
+  }
+  assert.equal((await db.user.findUniqueOrThrow({where:{id:user.id}})).role,'WORKER');
+  assert.equal(await db.user.count({where:{employee_code:{startsWith:'RETIRED-'}}}),0);
+});
 test('管理者のユーザー登録・ロール変更・無効化が監査され、既存セッションを失効する',async()=>{
-  const {token}=await service.login(codes[3],password);
+  const {token}=await service.login(codes[1],password);
   const user=await service.createUser(token,{employee_code:'NEW',name:'架空',role:'WORKER',password});
   assert.ok(!JSON.stringify(user).includes('password_hash'));
   const first=await service.login('NEW',password);
-  await service.updateUser(token,user.id,{role:'PURCHASER',active:true,name:'架空'});
+  await service.updateUser(token,user.id,{role:'ADMIN',active:true,name:'架空'});
   await assert.rejects(service.authenticate(first.token),status(401));
   const second=await service.login('NEW',password);
-  await service.updateUser(token,user.id,{role:'PURCHASER',active:false,name:'架空'});
+  await service.updateUser(token,user.id,{role:'ADMIN',active:false,name:'架空'});
   await assert.rejects(service.authenticate(second.token),status(401));
   await assert.rejects(service.login('NEW',password),status(401));
   assert.equal(await db.auditLog.count({where:{entity_id:user.id}}),3);
@@ -103,7 +112,7 @@ test('不正資格情報は一般化したエラーを返し、5回試行後は1
   }
   assert.equal(new Set(messages).size,1);
   now=new Date(now.getTime()+15*60_000);
-  assert.equal((await service.login(codes[1],password)).user.role,'STOCK_MANAGER');
+  assert.equal((await service.login(codes[1],password)).user.role,'ADMIN');
 });
 
 
@@ -113,7 +122,7 @@ test('同時ログイン失敗でも5回制限を超えて認証検証を通さ�
  assert.equal(statuses.filter(s=>s===401).length,5);assert.equal(statuses.filter(s=>s===429).length,3);
 });
 test('パスワード変更は既存セッションを失効し、旧パスワードを拒否する',async()=>{
- const {token}=await service.login(codes[3],password);
+ const {token}=await service.login(codes[1],password);
  const user=await db.user.findUniqueOrThrow({where:{employee_code:codes[0]}});
  const original=await service.login(codes[0],password);
  const nextPassword='Replacement-fictional-password-456';
@@ -123,7 +132,7 @@ test('パスワード変更は既存セッションを失効し、旧パスワ�
  assert.equal((await service.login(codes[0],nextPassword)).user.id,user.id);
 });
 test('管理者の相互降格が同時に発生しても有効管理者を保持する',async()=>{
- const first=await service.login(codes[3],password);
+ const first=await service.login(codes[1],password);
  const secondUser=await service.createUser(first.token,{employee_code:'OTHER-ADMIN',name:'架空管理者',role:'ADMIN',password});
  const second=await service.login('OTHER-ADMIN',password);
  const result=await Promise.allSettled([
