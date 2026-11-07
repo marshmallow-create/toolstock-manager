@@ -53,6 +53,7 @@ model Tool {
  tool_code String @unique
  name String
  department String @default("")
+ shelf_code String @default("")
  unit_price Decimal? @db.Decimal(14, 2)
  category String
  manufacturer String
@@ -111,6 +112,8 @@ model InventoryTransaction {
  machine_id String? @db.Uuid
  type TransactionType
  quantity Int
+ on_hand_after Int?
+ unit_price Decimal? @db.Decimal(14, 2)
  idempotency_key String @unique
  reverses_id String? @db.Uuid @unique
  reason String?

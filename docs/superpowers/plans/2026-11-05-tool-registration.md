@@ -2,7 +2,7 @@
 
 **Goal:** Show the nine list labels in the new-tool form and persist editable values.
 
-**Approach:** Keep stock and shelves in existing stock/location records and the reorder line in inventory policies. Add optional tool-level unit price and department, since registering an item does not require choosing a supplier. Preferred supplier pricing continues to take precedence. Preserve price visibility permissions. Per user clarification, 発注済み has no input and remains calculated from orders. 発注数 is editable and creates an OPEN reorder candidate when positive.
+**Approach:** Keep stock and shelves in existing stock/location records and the reorder line in inventory policies. Add optional tool-level unit price and department, since registering an item does not require choosing a supplier. The tool-level unit price takes precedence; only a missing base price falls back to historical preferred pricing. Supplier maintenance is retired. Preserve price visibility permissions. Per user clarification, 発注済み has no input and remains calculated from orders. 発注数 is editable and creates an OPEN reorder candidate when positive.
 
 - [x] Verify a failing service test for registration using the visible fields and atomic rollback.
 - [x] Add a migration for department and optional base unit price; validate and save registration, initial stock, and audit in one transaction.

@@ -16,6 +16,30 @@ const location = () => service.createMaster(fixture.tokens.ADMIN, 'locations', {
 before(async () => { fixture = await databaseFixture('masters_test'); service = new MastersService(fixture.db); });
 after(async () => { await fixture?.close(); });
 
+test('棚番は工具ごとに保存し、棚マスタや残高を変えずに編集できる', async () => {
+ const input = { ...toolInput(), shelf_code: '棚A-01', on_hand: 7 };
+ const tool = await service.createTool(fixture.tokens.ADMIN, input);
+ const detail = await service.toolDetail(fixture.tokens.ADMIN, tool.id);
+ assert.equal(detail.shelf_code, '棚A-01');
+ const beforeStocks = await fixture.db.stockBalance.findMany({ where: { tool_id: tool.id } });
+ const beforeHistory = await fixture.db.inventoryTransaction.findMany({ where: { tool_id: tool.id } });
+ const locationCount = await fixture.db.location.count();
+ await service.updateTool(fixture.tokens.ADMIN, tool.id, { ...input, active: true, shelf_code: '棚B-02' });
+ const row = (await service.listTools(fixture.tokens.WORKER, { tool_code: tool.tool_code })).tools[0];
+ assert.equal(row.shelf_code, '棚B-02'); assert.equal(row.on_hand, 7);
+ assert.equal(await fixture.db.location.count(), locationCount);
+ assert.deepEqual(await fixture.db.stockBalance.findMany({ where: { tool_id: tool.id } }), beforeStocks);
+ assert.deepEqual(await fixture.db.inventoryTransaction.findMany({ where: { tool_id: tool.id } }), beforeHistory);
+ const second = await service.createTool(fixture.tokens.ADMIN, { ...toolInput(), shelf_code: '棚B-02' });
+ assert.equal((await service.toolDetail(fixture.tokens.WORKER, second.id)).shelf_code, '棚B-02');
+ await service.updateTool(fixture.tokens.ADMIN, tool.id, { ...input, active: true, shelf_code: '' });
+ assert.equal((await service.toolDetail(fixture.tokens.WORKER, tool.id)).shelf_code, '');
+ const migratedShelf = Array.from({ length: 4 }, (_, i) => String(i).repeat(32)).join(' / ');
+ await fixture.db.tool.update({ where: { id: tool.id }, data: { shelf_code: migratedShelf } });
+ await service.updateTool(fixture.tokens.ADMIN, tool.id, { ...input, active: true, shelf_code: migratedShelf, name: '棚番を保持して名称更新' });
+ assert.equal((await service.toolDetail(fixture.tokens.WORKER, tool.id)).shelf_code, migratedShelf);
+});
+
 test('一覧ラベルの項目だけで工具・部門・単価・棚在庫を一括登録し単価の閲覧権限を守る', async () => {
  const input = { tool_code: code(), name: '一覧形式の登録', on_hand: '17', reorder_point: '5', order_quantity: '8', unit_price: '321.50', department: '加工部', shelf_code: code() };
  const tool = await service.createTool(fixture.tokens.ADMIN, input);
@@ -29,7 +53,7 @@ test('一覧ラベルの項目だけで工具・部門・単価・棚在庫を�
  const worker = (await service.listTools(fixture.tokens.WORKER, { tool_code: tool.tool_code })).tools[0];
  assert.equal(worker.unit_price, null);
  assert.ok(!JSON.stringify(await service.toolDetail(fixture.tokens.WORKER, tool.id)).includes('321.50'));
- for (const bad of [{ ...input, tool_code: code(), shelf_code: '' }, { ...input, tool_code: code(), unit_price: '-1' }, { ...input, tool_code: code(), order_quantity: '-1' }]) {
+ for (const bad of [{ ...input, tool_code: code(), shelf_code: 'a'.repeat(101) }, { ...input, tool_code: code(), unit_price: '-1' }, { ...input, tool_code: code(), order_quantity: '-1' }]) {
   await assert.rejects(service.createTool(fixture.tokens.ADMIN, bad), status(400));
   assert.equal(await fixture.db.tool.count({ where: { tool_code: bad.tool_code } }), 0);
  }
@@ -37,8 +61,8 @@ test('一覧ラベルの項目だけで工具・部門・単価・棚在庫を�
  assert.ok('location_code' in inactive);
  await service.updateMaster(fixture.tokens.ADMIN, 'locations', inactive.id, { name: '無効棚', active: false });
  const rejectedCode = code();
- await assert.rejects(service.createTool(fixture.tokens.ADMIN, { ...input, tool_code: rejectedCode, shelf_code: inactive.location_code }), status(409));
- assert.equal(await fixture.db.tool.count({ where: { tool_code: rejectedCode } }), 0);
+ const independent = await service.createTool(fixture.tokens.ADMIN, { ...input, tool_code: rejectedCode, shelf_code: inactive.location_code });
+ assert.equal((await service.toolDetail(fixture.tokens.ADMIN, independent.id)).shelf_code, inactive.location_code);
 });
 
 test('工具コードを正規化し方針と監査を保存、正規化後の重複を拒否', async () => {
@@ -51,16 +75,10 @@ test('工具コードを正規化し方針と監査を保存、正規化後の�
  await assert.rejects(service.createTool(fixture.tokens.ADMIN, input), status(409));
 });
 
-test('設備・棚・仕入先の登録、重複拒否、名前と状態の変更、コード変更禁止', async () => {
- for (const [kind, field] of [['machines', 'machine_code'], ['locations', 'location_code'], ['suppliers', 'supplier_code']] as const) {
-  const input = { [field]: code(), name: '架空名称', email: 'demo@example.invalid' };
-  const master = await service.createMaster(fixture.tokens.ADMIN, kind, input);
-  await assert.rejects(service.createMaster(fixture.tokens.ADMIN, kind, input), status(409));
-  const updated = await service.updateMaster(fixture.tokens.ADMIN, kind, master.id, { name: '変更後', active: false, email: '' });
-  assert.equal(updated.name, '変更後'); assert.equal(updated.active, false);
-  await assert.rejects(service.updateMaster(fixture.tokens.ADMIN, kind, master.id, { ...input, [field]: 'OTHER', active: true }), status(400));
- }
- await assert.rejects(service.listMasters(fixture.tokens.ADMIN, 'users'), status(400));
+test('storage locations remain editable while retired master kinds reject all operations',async()=>{
+ const input={location_code:code(),name:'shelf'};const master=await service.createMaster(fixture.tokens.ADMIN,'locations',input);await assert.rejects(service.createMaster(fixture.tokens.ADMIN,'locations',input),status(409));assert.equal((await service.updateMaster(fixture.tokens.ADMIN,'locations',master.id,{name:'updated',active:false})).active,false);await assert.rejects(service.updateMaster(fixture.tokens.ADMIN,'locations',master.id,{...input,location_code:'OTHER',active:true}),status(400));
+ for(const kind of ['machines','suppliers']){await assert.rejects(service.listMasters(fixture.tokens.ADMIN,kind),status(404));await assert.rejects(service.createMaster(fixture.tokens.ADMIN,kind,{name:'retired'}),status(404));await assert.rejects(service.updateMaster(fixture.tokens.ADMIN,kind,master.id,{name:'retired'}),status(404));}
+ await assert.rejects(service.listMasters(fixture.tokens.ADMIN,'users'),status(400));
 });
 
 test('在庫方針・型・桁数とUUIDを検証し、欠落した方針だけ0を初期値にする', async () => {
@@ -100,38 +118,28 @@ test('工具の品目コード・品目名のみを検索し、分類・状態�
  assert.equal((await service.listTools(fixture.tokens.ADMIN, { q: input.tool_code, status: 'inactive' })).total, 1);
 });
 
-test('単価をDecimalで保存し優先仕入先を一つに維持、作業者には購買条件を返さない', async () => {
- const tool = await createTool();
- const suppliers = await Promise.all([1, 2].map(() => service.createMaster(fixture.tokens.ADMIN, 'suppliers', { supplier_code: code(), name: '架空商社' })));
- const input = { supplier_id: suppliers[0].id, unit_price: '999999999999.99', order_multiple: 5, lead_time_days: 3, preferred: true };
- const first = await service.saveSupplierItem(fixture.tokens.ADMIN, tool.id, undefined, input);
- assert.equal(first.unit_price, '999999999999.99');
- await assert.rejects(service.saveSupplierItem(fixture.tokens.ADMIN, tool.id, undefined, input), status(409));
- const second = await service.saveSupplierItem(fixture.tokens.ADMIN, tool.id, undefined, { ...input, supplier_id: suppliers[1].id, unit_price: '0.10' });
- await Promise.all([first.id, second.id].map((id, i) => service.saveSupplierItem(fixture.tokens.ADMIN, tool.id, id, { ...input, supplier_id: suppliers[i].id, unit_price: '1.25' })));
- assert.equal(await fixture.db.supplierItem.count({ where: { tool_id: tool.id, preferred: true } }), 1);
- const worker = await service.toolDetail(fixture.tokens.WORKER, tool.id);
- assert.ok(!('supplier_items' in worker));
- assert.equal((await service.toolDetail(fixture.tokens.ADMIN, tool.id)).supplier_items?.length, 2);
- await assert.rejects(service.listMasters(fixture.tokens.WORKER, 'suppliers'), status(403));
- for (const bad of ['-1', '1.001', '1e2', 'NaN', '1000000000000.00', true]) {
-  await assert.rejects(service.saveSupplierItem(fixture.tokens.ADMIN, tool.id, first.id, { ...input, unit_price: bad }), status(400));
- }
+test('tool price takes precedence over historical supplier price without exposing suppliers',async()=>{
+ const tool=await createTool();const supplier=await fixture.db.supplier.create({data:{supplier_code:code(),name:'legacy supplier'}});await fixture.db.supplierItem.create({data:{tool_id:tool.id,supplier_id:supplier.id,unit_price:'25.50',order_multiple:1,lead_time_days:1,preferred:true}});
+ assert.equal((await service.listTools(fixture.tokens.ADMIN,{q:tool.tool_code})).tools[0].unit_price,'25.50');
+ await fixture.db.tool.update({where:{id:tool.id},data:{unit_price:'12.25'}});assert.equal((await service.listTools(fixture.tokens.ADMIN,{q:tool.tool_code})).tools[0].unit_price,'12.25');
+ for(const role of ['WORKER','ADMIN'])assert.ok(!('supplier_items' in await service.toolDetail(fixture.tokens[role],tool.id)));assert.ok(!('saveSupplierItem' in service));
+ assert.equal((await service.listTools(fixture.tokens.WORKER,{q:tool.tool_code})).tools[0].unit_price,null);
 });
 
 test('一覧に棚番・発注点・発注残・候補数・優先単価を集計し単価の権限を守る', async () => {
  const tool = await createTool(), shelf = await location();
  assert.ok('location_code' in shelf);
  await service.registerInitialStock(fixture.tokens.ADMIN, tool.id, { location_id: shelf.id, quantity: 12, request_key: randomUUID() });
- const supplier = await service.createMaster(fixture.tokens.ADMIN, 'suppliers', { supplier_code: code(), name: '一覧用仕入先' });
- await service.saveSupplierItem(fixture.tokens.ADMIN, tool.id, undefined, { supplier_id: supplier.id, unit_price: '1234.50', order_multiple: 1, lead_time_days: 3, preferred: true });
+ const supplier = await fixture.db.supplier.create({data:{supplier_code:code(),name:'historical supplier'}});
+ await fixture.db.supplierItem.create({data:{tool_id:tool.id,supplier_id:supplier.id,unit_price:'1234.50',order_multiple:1,lead_time_days:3,preferred:true}});
  for (const [status, ordered_quantity, received_quantity] of [['ORDERED', 10, 0], ['PARTIALLY_RECEIVED', 8, 3], ['CANCELLED', 99, 0], ['DRAFT', 99, 0], ['RECEIVED', 4, 4]] as const) {
   await fixture.db.purchaseOrder.create({ data: { order_no: code(), supplier_id: supplier.id, status, requested_by: fixture.users.ADMIN, purchase_order_items_order_id_children: { create: { tool_id: tool.id, ordered_quantity, received_quantity, unit_price: '1234.50', supplier_model: '', order_multiple: 1, lead_time_days: 3 } } } });
  }
  await fixture.db.reorderCandidate.createMany({ data: [{ tool_id: tool.id, status: 'OPEN', quantity: 8 }, { tool_id: tool.id, status: 'DISMISSED', quantity: 99 }] });
  const row = (await service.listTools(fixture.tokens.ADMIN, { q: tool.tool_code })).tools[0];
  assert.equal(row.on_hand, 12);
- assert.deepEqual(row.shelf_codes, [shelf.location_code]);
+ assert.equal(row.shelf_code, '');
+ assert.deepEqual(row.shelf_codes, []);
  assert.equal(row.reorder_point, 5);
  assert.equal(row.on_order, 15);
  assert.equal(row.order_quantity, 8);
@@ -240,23 +248,4 @@ test('自分のユーザー名更新とマスタ保存を同時に行っても�
   fixture.auth.updateUser(fixture.tokens.ADMIN, fixture.users.ADMIN, { name: '架空管理者更新', role: 'ADMIN', active: true }),
   service.createTool(fixture.tokens.ADMIN, toolInput()),
  ]);
-});
-
-test('優先仕入先切り替えの両側を監査し、監査失敗では切り替え全体を戻す', async () => {
- const tool = await createTool();
- const suppliers = await Promise.all([1, 2].map(() => service.createMaster(fixture.tokens.ADMIN, 'suppliers', { supplier_code: code(), name: '架空仕入先' })));
- const input = { supplier_id: suppliers[0].id, unit_price: '10.50', order_multiple: 1, lead_time_days: 1, preferred: true };
- const first = await service.saveSupplierItem(fixture.tokens.ADMIN, tool.id, undefined, input);
- const second = await service.saveSupplierItem(fixture.tokens.ADMIN, tool.id, undefined, { ...input, supplier_id: suppliers[1].id, preferred: false });
- await service.saveSupplierItem(fixture.tokens.ADMIN, tool.id, second.id, { ...input, supplier_id: suppliers[1].id });
- const log = await fixture.db.auditLog.findFirstOrThrow({ where: { entity_id: second.id, action: 'SUPPLIER_ITEM_SAVED' }, orderBy: { created_at: 'desc' } });
- const details = log.details as unknown as { before: { preferred: boolean }; after: { preferred: boolean }; preference_changes: { before: { id: string; preferred: boolean }; after: { id: string; preferred: boolean } }[] };
- assert.equal(details.before.preferred, false); assert.equal(details.after.preferred, true);
- assert.deepEqual(details.preference_changes.map(change => ({ before: { id: change.before.id, preferred: change.before.preferred }, after: { id: change.after.id, preferred: change.after.preferred } })), [{ before: { id: first.id, preferred: true }, after: { id: first.id, preferred: false } }]);
- await fixture.admin.query("CREATE FUNCTION fail_supplier_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action = 'SUPPLIER_ITEM_SAVED' THEN RAISE EXCEPTION 'test audit rejection'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_supplier_audit BEFORE INSERT ON audit_logs FOR EACH ROW EXECUTE FUNCTION fail_supplier_audit()");
- try {
-  await assert.rejects(service.saveSupplierItem(fixture.tokens.ADMIN, tool.id, first.id, input));
-  assert.equal((await fixture.db.supplierItem.findUniqueOrThrow({ where: { id: first.id } })).preferred, false);
-  assert.equal((await fixture.db.supplierItem.findUniqueOrThrow({ where: { id: second.id } })).preferred, true);
- } finally { await fixture.admin.query('DROP TRIGGER reject_supplier_audit ON audit_logs; DROP FUNCTION fail_supplier_audit()'); }
 });

@@ -15,6 +15,5 @@ export class MastersService {
  updateTool(token: string | undefined, id: string, input: Input) { return write.updateTool(this.db, this.auth, token, id, input); }
  createMaster(token: string | undefined, kind: string, input: Input) { return write.createMaster(this.db, this.auth, token, kind, input); }
  updateMaster(token: string | undefined, kind: string, id: string, input: Input) { return write.updateMaster(this.db, this.auth, token, kind, id, input); }
- saveSupplierItem(token: string | undefined, toolId: string, conditionId: string | undefined, input: Input) { return write.saveSupplierItem(this.db, this.auth, token, toolId, conditionId, input); }
  registerInitialStock(token: string | undefined, toolId: string, input: Input) { return registerInitialStock(this.db, this.auth, token, toolId, input); }
 }

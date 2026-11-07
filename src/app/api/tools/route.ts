@@ -5,5 +5,5 @@ export async function GET(request: Request) {
  return jsonRead(() => masters().listTools(requestToken(request), Object.fromEntries(new URL(request.url).searchParams)));
 }
 export async function POST(request: Request) {
- return mutate(request, '/tools?saved=1', '/tools/new', async body => ({ status: 201, body: { tool: await masters().createTool(requestToken(request), body) } }));
+ return mutate(request, '/dashboard?saved=1', '/tools/new', async body => ({ status: 201, body: { tool: await masters().createTool(requestToken(request), body) } }));
 }

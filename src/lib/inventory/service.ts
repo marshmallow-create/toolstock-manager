@@ -8,7 +8,6 @@ export class InventoryService {
  constructor(private db:PrismaClient){this.auth=new AuthService(db);}
  issue(token:string|undefined,input:Input){return mutateInventory(this.db,this.auth,token,'issue',input);}
  receive(token:string|undefined,input:Input){return mutateInventory(this.db,this.auth,token,'receive',input);}
- adjust(token:string|undefined,input:Input){return mutateInventory(this.db,this.auth,token,'adjust',input);}
  reverse(token:string|undefined,input:Input){return mutateInventory(this.db,this.auth,token,'reverse',input);}
  listHistory(token:string|undefined,query:Input={}){return read.listHistory(this.db,this.auth,token,query);}
  historyDetail(token:string|undefined,id:string){return read.historyDetail(this.db,this.auth,token,id);}

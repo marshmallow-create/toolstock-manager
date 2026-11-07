@@ -1,3 +1,4 @@
+import { recordedUnitPrice } from '../inventory/snapshot';
 import type { PrismaClient } from '../../generated/prisma/client';
 import { AuthService, AuthError } from '../auth/service';
 import { uuid, integer, type Input } from './validation';
@@ -21,7 +22,7 @@ export async function registerInitialStock(db: PrismaClient, auth: AuthService, 
   if (!tool.active || !location.active) throw new AuthError(409, '有効な工具・保管場所を選択してください');
   if (await tx.stockBalance.findUnique({ where: { tool_id_location_id: { tool_id: toolId, location_id: locationId } } })) throw new AuthError(409, 'この保管場所の初期在庫は登録済みです');
   const stock = await tx.stockBalance.create({ data: { tool_id: toolId, location_id: locationId, on_hand: quantity, reserved: 0 } });
-  if (quantity > 0) await tx.inventoryTransaction.create({ data: { tool_id: toolId, location_id: locationId, actor_user_id: actor.id, type: 'RECEIVE', quantity, idempotency_key: key, reason: '初期在庫登録' } });
+  if (quantity > 0) await tx.inventoryTransaction.create({ data: { tool_id: toolId, location_id: locationId, actor_user_id: actor.id, type: 'RECEIVE', quantity, on_hand_after: quantity, unit_price: await recordedUnitPrice(tx, tool), idempotency_key: key, reason: '初期在庫登録' } });
   const result = { stock_balance_id: stock.id, tool_id: toolId, location_id: locationId, quantity };
   await audit(tx, actor.id, 'INITIAL_STOCK_REGISTERED', 'stock_balances', key, result);
   return result;

@@ -4,15 +4,14 @@ import type { Operation, Input } from './types';
 export type Normalized = {
  operation:Operation; request_key:string; reason:string|null;
  tool_id?:string; location_id?:string; quantity?:number; machine_id?:string;
- counted_quantity?:number; expected_on_hand?:number; expected_reserved?:number; transaction_id?:string;
+ transaction_id?:string;
 };
 export function mutationInput(operation:Operation,input:Input):Normalized {
- const request_key=uuid(input.request_key), reason=text(input.reason,'理由',500,operation==='issue')||null;
+ const request_key=uuid(input.request_key), reason=text(input.reason,'理由',500,operation!=='reverse')||null;
  if(operation==='reverse')return {operation,request_key,reason,transaction_id:uuid(input.transaction_id)};
  const common={operation,request_key,reason,tool_id:uuid(input.tool_id),location_id:uuid(input.location_id)};
- if(operation==='adjust')return {...common,counted_quantity:integer(input.counted_quantity,'実棚数'),expected_on_hand:integer(input.expected_on_hand,'確認時の実在庫'),expected_reserved:integer(input.expected_reserved,'確認時の引当')};
- if(operation==='receive'&&['order_id','order_item_id','purchase_order_id','purchase_order_item_id'].some(field=>Object.hasOwn(input,field)))throw new AuthError(400,'発注書にひも付く入荷は未対応です。理由付き手動入庫を利用してください');
- return {...common,quantity:integer(input.quantity,'数量',1),...(operation==='issue'?{machine_id:uuid(input.machine_id)}:{})};
+ if(operation==='receive'&&['order_id','order_item_id','purchase_order_id','purchase_order_item_id'].some(field=>Object.hasOwn(input,field)))throw new AuthError(400,'発注書にひも付く入荷は未対応です。入庫を利用してください');
+ return {...common,quantity:integer(input.quantity,'数量',1),...(operation==='issue'&&input.machine_id!==undefined&&input.machine_id!==''?{machine_id:uuid(input.machine_id)}:{})};
 }
 export function fingerprint(input:Normalized) {
  return JSON.stringify(Object.keys(input).sort().map(key=>[key,input[key as keyof Normalized]]));

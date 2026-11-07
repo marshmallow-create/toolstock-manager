@@ -15,13 +15,13 @@ async function stock(on_hand=10,reserved=0){
  const n=++seq;
  const tool=await masters.createTool(token(),{tool_code:'INV-'+n,name:'架空ドリル'+n,category:'DRILL',unit:'本'});
  const location=await masters.createMaster(token(),'locations',{location_code:'SHELF-'+n,name:'架空棚'});
- const machine=await masters.createMaster(token(),'machines',{machine_code:'MC-'+n,name:'架空設備'});
+ const machine=await f.db.machine.create({data:{machine_code:'MC-'+n,name:'legacy equipment'}});
  await masters.registerInitialStock(token(),tool.id,{location_id:location.id,quantity:on_hand,request_key:randomUUID()});
  if(reserved)await f.db.stockBalance.update({where:{tool_id_location_id:{tool_id:tool.id,location_id:location.id}},data:{reserved}});
  return {tool,location,machine};
 }
 type FixtureStock=Awaited<ReturnType<typeof stock>>;
-const issueInput=(s:FixtureStock,quantity=1)=>({tool_id:s.tool.id,location_id:s.location.id,machine_id:s.machine.id,quantity,request_key:randomUUID()});
+const issueInput=(s:FixtureStock,quantity=1)=>({tool_id:s.tool.id,location_id:s.location.id,quantity,request_key:randomUUID()});
 const balance=(s:FixtureStock)=>f.db.stockBalance.findUniqueOrThrow({where:{tool_id_location_id:{tool_id:s.tool.id,location_id:s.location.id}}});
 
 test('出庫はセッションの操作者で残高・履歴・監査を一体保存する',async()=>{
@@ -63,15 +63,12 @@ test('同じキーを別工具へ同時利用しても一度しか成立しな�
  const rejected=results.find(r=>r.status==='rejected');assert.ok(rejected?.status==='rejected'&&status(409)(rejected.reason));
 });
 
-test('出庫は設備必須・有効対象必須、在庫不足と未登録棚を拒否',async()=>{
+test('equipment-free issue validates active targets and available stock',async()=>{
  const s=await stock(3,1);
- await assert.rejects(service.issue(token('WORKER'),{...issueInput(s),machine_id:undefined}),status(400));
+ assert.equal((await service.issue(token('WORKER'),issueInput(s))).machine_id,null);await assert.rejects(service.issue(token('WORKER'),{...issueInput(s),machine_id:s.machine.id}),status(400));
  await assert.rejects(service.issue(token('WORKER'),issueInput(s,3)),status(409));
  const shelf=await masters.createMaster(token(),'locations',{location_code:'EMPTY-'+(++seq),name:'未登録棚'});
  await assert.rejects(service.issue(token('WORKER'),{...issueInput(s),location_id:shelf.id}),status(409));
- await f.db.machine.update({where:{id:s.machine.id},data:{active:false}});
- await assert.rejects(service.issue(token('WORKER'),issueInput(s)),status(409));
- await f.db.machine.update({where:{id:s.machine.id},data:{active:true}});
  await f.db.location.update({where:{id:s.location.id},data:{active:false}});
  await assert.rejects(service.issue(token('WORKER'),issueInput(s)),status(409));
  await f.db.location.update({where:{id:s.location.id},data:{active:true}});
@@ -82,14 +79,14 @@ test('出庫は設備必須・有効対象必須、在庫不足と未登録棚�
 test('数量・理由・IDの型と整数範囲を検証する',async()=>{
  const s=await stock();
  for(const quantity of [0,-1,0.5,'1e2','',true,'2147483648'])await assert.rejects(service.issue(token('WORKER'),{...issueInput(s),quantity}),status(400));
- for(const reason of ['', ' ', 'x'.repeat(501), false])await assert.rejects(service.receive(token(),{...issueInput(s),reason}),status(400));
+ for(const reason of ['x'.repeat(501), false])await assert.rejects(service.receive(token(),{...issueInput(s),reason}),status(400));
  await assert.rejects(service.issue(token('WORKER'),{...issueInput(s),tool_id:'bad'}),status(400));
  await assert.rejects(service.issue(token('WORKER'),{...issueInput(s),request_key:'bad'}),status(400));
  await assert.rejects(service.receive(token(),{...issueInput(s),reason:'架空',order_id:randomUUID()}),status(400));
  await assert.rejects(service.reverse(token(),{transaction_id:randomUUID(),reason:'架空',request_key:randomUUID()}),status(404));
 });
 
-test('手動入庫は未登録棚を作成し、同じ棚への同時入庫と再送で正しく加算する',async()=>{
+test('receiving adds stock concurrently and replays once',async()=>{
  const s=await stock(0);
  const shelf=await masters.createMaster(token(),'locations',{location_code:'RECEIVE-'+(++seq),name:'入庫先'});
  const input={tool_id:s.tool.id,location_id:shelf.id,quantity:3,reason:'架空追加',request_key:randomUUID()};
@@ -108,24 +105,13 @@ test('加算の整数上限を超えず、失敗したキーを内容そのま�
  const result=await service.receive(token(),input);assert.equal(result.on_hand_after,2147483647);
 });
 
-test('棚卸は実棚数との差分を保存し、同内容再送、期待値違い、差分0、引当割れを区別',async()=>{
- const s=await stock(10,2);
- const input={tool_id:s.tool.id,location_id:s.location.id,counted_quantity:8,expected_on_hand:10,expected_reserved:2,reason:'架空棚卸',request_key:randomUUID()};
- const first=await service.adjust(token(),input);assert.equal(first.quantity,-2);assert.equal(first.type,'ADJUSTMENT');
- assert.deepEqual(await service.adjust(token(),input),first);
- await assert.rejects(service.adjust(token(),{...input,request_key:randomUUID()}),status(409));
- await assert.rejects(service.adjust(token(),{...input,counted_quantity:8,expected_on_hand:8,request_key:randomUUID()}),status(409));
- await assert.rejects(service.adjust(token(),{...input,counted_quantity:1,expected_on_hand:8,request_key:randomUUID()}),status(409));
- await assert.rejects(service.adjust(token(),{...input,counted_quantity:7,expected_on_hand:8,expected_reserved:0,request_key:randomUUID()}),status(409));
- const next=await service.adjust(token(),{...input,counted_quantity:12,expected_on_hand:8,request_key:randomUUID()});assert.equal(next.quantity,4);
- const zero=await stock(3);const empty=await service.adjust(token(),{...input,tool_id:zero.tool.id,location_id:zero.location.id,counted_quantity:0,expected_on_hand:3,expected_reserved:0,request_key:randomUUID()});assert.equal(empty.on_hand_after,0);
-});
+test('stocktaking service is retired',()=>{assert.equal('adjust' in service,false);});
 
-test('逆取引は元履歴を保持して逆符号・元設備・訂正者・理由を記録し、二重取消を拒否',async()=>{
+test('reversal preserves original history and rejects duplicate cancellation',async()=>{
  const s=await stock(),original=await service.issue(token('WORKER'),issueInput(s,3));
  const input={transaction_id:original.id,reason:'設備の選択間違い',request_key:randomUUID()};
  const reversed=await service.reverse(token(),input);
- assert.equal(reversed.quantity,3);assert.equal(reversed.machine_id,s.machine.id);assert.equal(reversed.actor_user_id,f.users.ADMIN);assert.equal(reversed.reverses_id,original.id);
+ assert.equal(reversed.quantity,3);assert.equal(reversed.machine_id,null);assert.equal(reversed.actor_user_id,f.users.ADMIN);assert.equal(reversed.reverses_id,original.id);
  assert.equal((await balance(s)).on_hand,10);assert.equal((await f.db.inventoryTransaction.findUniqueOrThrow({where:{id:original.id}})).quantity,-3);
  assert.deepEqual(await service.reverse(token(),input),reversed);
  assert.equal((await service.historyDetail(token('WORKER'),original.id)).reversal_id,reversed.id);
@@ -145,7 +131,7 @@ test('同時の二重取消は片方のみ成功し、消費済み入庫や引�
  await assert.rejects(service.reverse(token(),{transaction_id:initial.id,reason:'初期登録取消',request_key:randomUUID()}),status(409));
 });
 
-test('無効化された工具・棚・設備でも過去の逆取引と成功済み再送は許可',async()=>{
+test('inactive targets still allow reversal and successful replay',async()=>{
  const s=await stock(),input=issueInput(s,2),original=await service.issue(token('WORKER'),input);
  await f.db.tool.update({where:{id:s.tool.id},data:{active:false}});
  await f.db.location.update({where:{id:s.location.id},data:{active:false}});
@@ -155,16 +141,17 @@ test('無効化された工具・棚・設備でも過去の逆取引と成功�
  assert.equal(reversed.on_hand_after,10);
 });
 
-test('本人履歴は自分の出庫と管理者によるその逆取引のみで、他人の直指定・操作者指定を拒否',async()=>{
+test('own history includes both issue and receive plus their admin reversals',async()=>{
  const s=await stock(),own=await service.issue(token('WORKER'),issueInput(s)),other=await service.issue(token('ADMIN'),issueInput(s));
+ const receipt=await service.receive(token('WORKER'),issueInput(s,2));const receiptCancel=await service.reverse(token(),{transaction_id:receipt.id,reason:'cancel receipt',request_key:randomUUID()});
  const reversed=await service.reverse(token(),{transaction_id:own.id,reason:'架空訂正',request_key:randomUUID()});
  const list=await service.listHistory(token('WORKER'),{tool_id:s.tool.id});
- assert.equal(list.total,2);assert.ok(list.items.some(item=>item.id===own.id));assert.ok(list.items.some(item=>item.id===reversed.id));
+ assert.equal(list.total,4);assert.ok(list.items.some(item=>item.id===own.id));assert.ok(list.items.some(item=>item.id===reversed.id));
  await assert.rejects(service.historyDetail(token('WORKER'),other.id),status(404));
  await assert.rejects(service.listHistory(token('WORKER'),{actor_user_id:f.users.ADMIN}),status(403));
- assert.equal((await service.listHistory(token('ADMIN'),{tool_id:s.tool.id})).total,4);
+ assert.equal((await service.listHistory(token('ADMIN'),{tool_id:s.tool.id})).total,6);
  const text=JSON.stringify(await service.historyDetail(token('WORKER'),reversed.id));assert.ok(!text.includes('password_hash'));assert.ok(!text.includes('token_hash'));assert.ok(!text.includes('unit_price'));
- assert.equal((await service.historyOptions(token('WORKER'))).actors.length,1);
+ assert.equal((await service.historyOptions(token('WORKER'))).actors.length,1);assert.ok(!('machines' in await service.historyOptions(token())));assert.ok(!('machine' in (await service.historyDetail(token(),own.id))));assert.ok(list.items.some(item=>item.id===receipt.id));assert.ok(list.items.some(item=>item.id===receiptCancel.id));await assert.rejects(service.listHistory(token(),{machine_id:s.machine.id}),status(400));
 });
 
 test('日本時間の日付境界と実在日・期間・種別・ID・ページを検証する',async()=>{
@@ -182,16 +169,16 @@ test('履歴は50件単位で同時刻ならID降順、範囲外ページは空'
  assert.equal((await service.listHistory(token(),{tool_id:s.tool.id,page:'999999999999'})).items.length,0);
 });
 
-test('管理者の降格後は旧セッションと作業者による入庫の再送を拒否',async()=>{
+test('role change invalidates old session while worker can replay their own receipt',async()=>{
  const s=await stock();
- for(const method of ['receive','adjust','reverse'] as const)await assert.rejects(service[method](token('WORKER'),{}),status(403));
+ for(const method of ['reverse'] as const)await assert.rejects(service[method](token('WORKER'),{}),status(403));
  assert.equal((await service.issue(token('ADMIN'),issueInput(s))).type,'ISSUE');
  await assert.rejects(service.listHistory(undefined,{}),status(401));
  const employee_code='INV-TEMP',user=await f.auth.createUser(token(),{employee_code,name:'架空管理者',role:'ADMIN',password:f.password});
  const session=(await f.auth.login(employee_code,f.password)).token,input={...issueInput(s),reason:'降格前入庫'};await service.receive(session,input);
  await f.auth.updateUser(token(),user.id,{name:'架空',role:'WORKER',active:true});
  await assert.rejects(service.receive(session,input),status(401));
- const next=(await f.auth.login(employee_code,f.password)).token;await assert.rejects(service.receive(next,input),status(403));
+ const next=(await f.auth.login(employee_code,f.password)).token;assert.equal((await service.receive(next,input)).type,'RECEIVE');
 });
 
 test('監査保存失敗なら残高と取引履歴を全てロールバック',async()=>{
@@ -223,4 +210,50 @@ test('管理用更新と入出庫の同時操作は整合し、ロック待ち�
  await f.admin.query('BEGIN');await f.admin.query('SELECT id FROM tools WHERE id=$1 FOR UPDATE',[s.tool.id]);
  try{await assert.rejects(service.issue(token('WORKER'),issueInput(s)),status(409));assert.equal((await balance(s)).on_hand,9);}
  finally{await f.admin.query('ROLLBACK');}
+});
+
+test('ordinary receiving requires neither equipment nor reason for either role',async()=>{
+ for(const role of ['WORKER','ADMIN']){const s=await stock();const r=await service.receive(token(role),issueInput(s));assert.equal(r.reason,null);assert.equal(r.machine_id,null);assert.equal(r.actor_user_id,f.users[role]);await service.historyDetail(token(role),r.id);}
+});
+
+test('successful legacy equipment request can replay after retirement',async()=>{
+ const s=await stock(),input={...issueInput(s,2),machine_id:s.machine.id,reason:'legacy task'};
+ const normalized={operation:'issue',request_key:input.request_key,reason:input.reason,tool_id:s.tool.id,location_id:s.location.id,machine_id:s.machine.id,quantity:2};
+ const transaction=await f.db.inventoryTransaction.create({data:{tool_id:s.tool.id,location_id:s.location.id,machine_id:s.machine.id,actor_user_id:f.users.WORKER,type:'ISSUE',quantity:-2,reason:input.reason,idempotency_key:'phase4:'+input.request_key}});
+ await f.db.stockBalance.update({where:{tool_id_location_id:{tool_id:s.tool.id,location_id:s.location.id}},data:{on_hand:8}});
+ const result={id:transaction.id,type:'ISSUE',tool_id:s.tool.id,location_id:s.location.id,actor_user_id:f.users.WORKER,machine_id:s.machine.id,quantity:-2,on_hand_before:10,on_hand_after:8,reserved:0,reason:input.reason,reverses_id:null,created_at:transaction.created_at.toISOString()};
+ await f.db.auditLog.create({data:{actor_user_id:f.users.WORKER,action:'INVENTORY_MUTATION',entity_type:'inventory_transactions',entity_id:transaction.id,details:{request:normalized,request_fingerprint:JSON.stringify(Object.keys(normalized).sort().map(k=>[k,normalized[k as keyof typeof normalized]])),result}}});
+ assert.deepEqual(await service.issue(token('WORKER'),input),result);assert.equal((await balance(s)).on_hand,8);
+ const legacyDetail=await service.historyDetail(token(),transaction.id);assert.equal(legacyDetail.on_hand_after,8);assert.equal(legacyDetail.unit_price,null);
+ const reversed=await service.reverse(token(),{transaction_id:transaction.id,request_key:randomUUID(),reason:'legacy correction'});assert.equal(reversed.machine_id,s.machine.id);
+});
+
+
+test('history freezes transaction balance and decimal price and filters inclusive ranges',async()=>{
+ const s=await stock(10);await f.db.tool.update({where:{id:s.tool.id},data:{unit_price:'100.25'}});
+ const issued=await service.issue(token('WORKER'),issueInput(s,2));
+ await f.db.tool.update({where:{id:s.tool.id},data:{unit_price:'999.99'}});
+ const received=await service.receive(token('WORKER'),issueInput(s,3));
+ const reversed=await service.reverse(token(),{transaction_id:issued.id,request_key:randomUUID(),reason:'correct issue'});
+ const rows=(await service.listHistory(token(),{tool_id:s.tool.id})).items;
+ const issue=rows.find(x=>x.id===issued.id)!,receive=rows.find(x=>x.id===received.id)!,reverse=rows.find(x=>x.id===reversed.id)!;
+ assert.equal(issue.on_hand_after,8);assert.equal(issue.unit_price,'100.25');assert.equal(issue.tool.category,'DRILL');
+ assert.equal(receive.on_hand_after,11);assert.equal(receive.unit_price,'999.99');assert.equal(reverse.on_hand_after,13);assert.equal(reverse.unit_price,'100.25');
+ assert.deepEqual((await service.listHistory(token(),{tool_id:s.tool.id,unit_price_min:'100.25',unit_price_max:'100.25'})).items.map(x=>x.id).sort(),[issued.id,reversed.id].sort());
+ assert.deepEqual((await service.listHistory(token(),{tool_id:s.tool.id,unit_price_min:'100.25',unit_price_max:'100.25',movement:'RECEIVE'})).items.map(x=>x.id),[reversed.id]);
+ assert.equal((await service.historyDetail(token('WORKER'),issued.id)).unit_price,undefined);
+ await assert.rejects(service.listHistory(token('WORKER'),{unit_price_min:'0'}),status(403));
+ for(const query of [{unit_price_min:'-1'},{unit_price_max:'1.001'},{unit_price_min:'1e2'},{unit_price_min:'2',unit_price_max:'1'},{movement:'BOGUS'}])await assert.rejects(service.listHistory(token(),query),status(400));
+ assert.equal((await service.listHistory(token(),{tool_id:s.tool.id,unit_price_min:'',unit_price_max:''})).items.length,4);
+});
+
+
+test('snapshot prices include zero and maximum precision and old replay retains known balance',async()=>{
+ const s=await stock(10);await f.db.tool.update({where:{id:s.tool.id},data:{unit_price:'999999999999.99'}});
+ const large=await service.receive(token(),issueInput(s));
+ assert.deepEqual((await service.listHistory(token(),{tool_id:s.tool.id,unit_price_min:'999999999999.99',unit_price_max:'999999999999.99'})).items.map(x=>x.id),[large.id]);
+ await f.db.tool.update({where:{id:s.tool.id},data:{unit_price:'0.00'}});const zero=await service.receive(token(),issueInput(s));
+ assert.deepEqual((await service.listHistory(token(),{tool_id:s.tool.id,unit_price_max:'0'})).items.map(x=>x.id),[zero.id]);
+ const tool=await masters.createTool(token(),{tool_code:'SNAPSHOT-OPENING',name:'opening snapshot',on_hand:4,unit_price:'12.34'});
+ const opening=(await service.listHistory(token(),{tool_id:tool.id})).items[0];assert.equal(opening.on_hand_after,4);assert.equal(opening.unit_price,'12.34');
 });
