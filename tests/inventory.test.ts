@@ -161,6 +161,22 @@ test('日本時間の日付境界と実在日・期間・種別・ID・ページ
  for(const query of [{from:'2026-02-30'},{from:'2026-11-05',to:'2026-11-04'},{type:'INVALID'},{tool_id:'bad'},{page:'1.5'}])await assert.rejects(service.listHistory(token(),query),status(400));
 });
 
+test('履歴を品目コード・カテゴリー・操作者で絞り込み本人の参照範囲を守る', async () => {
+ const s = await stock(10);
+ const own = await service.issue(token('WORKER'), issueInput(s));
+ const other = await service.issue(token(), issueInput(s));
+ const reversal = await service.reverse(token(), { transaction_id: own.id, reason: '訂正', request_key: randomUUID() });
+ const query = { tool_code: s.tool.tool_code.toLowerCase(), category: 'drill' };
+ const admin = await service.listHistory(token(), { ...query, actor_user_id: f.users.ADMIN });
+ assert.deepEqual(new Set(admin.items.map(row => row.id)), new Set([other.id, reversal.id, ...(await f.db.inventoryTransaction.findMany({where:{tool_id:s.tool.id,type:'RECEIVE'}})).map(row=>row.id)]));
+ const ownOnly = await service.listHistory(token('WORKER'), { ...query, actor_user_id: f.users.WORKER });
+ assert.deepEqual(ownOnly.items.map(row => row.id), [own.id]);
+ assert.equal((await service.listHistory(token(), { ...query, category: 'TAP' })).total, 0);
+ assert.equal((await service.listHistory(token(), { ...query, tool_code: 'MISSING' })).total, 0);
+ await assert.rejects(service.listHistory(token('WORKER'), { ...query, actor_user_id: f.users.ADMIN }), status(403));
+ for (const bad of [{ tool_code: 'x'.repeat(101) }, { category: 'x'.repeat(65) }, { category: [] }]) await assert.rejects(service.listHistory(token(), bad), status(400));
+});
+
 test('履歴は50件単位で同時刻ならID降順、範囲外ページは空',async()=>{
  const s=await stock(0),prefix='10000000-0000-0000-0000-';
  await f.db.inventoryTransaction.createMany({data:Array.from({length:51},(_,i)=>({id:prefix+String(i+1).padStart(12,'0'),tool_id:s.tool.id,location_id:s.location.id,actor_user_id:f.users.WORKER,machine_id:s.machine.id,type:'ISSUE' as const,quantity:-1,idempotency_key:randomUUID(),created_at:new Date('2026-11-01T00:00:00Z')}))});
@@ -254,6 +270,6 @@ test('snapshot prices include zero and maximum precision and old replay retains 
  assert.deepEqual((await service.listHistory(token(),{tool_id:s.tool.id,unit_price_min:'999999999999.99',unit_price_max:'999999999999.99'})).items.map(x=>x.id),[large.id]);
  await f.db.tool.update({where:{id:s.tool.id},data:{unit_price:'0.00'}});const zero=await service.receive(token(),issueInput(s));
  assert.deepEqual((await service.listHistory(token(),{tool_id:s.tool.id,unit_price_max:'0'})).items.map(x=>x.id),[zero.id]);
- const tool=await masters.createTool(token(),{tool_code:'SNAPSHOT-OPENING',name:'opening snapshot',on_hand:4,unit_price:'12.34'});
+ const tool=await masters.createTool(token(),{tool_code:'SNAPSHOT-OPENING',category:'DRILL',name:'opening snapshot',on_hand:4,unit_price:'12.34'});
  const opening=(await service.listHistory(token(),{tool_id:tool.id})).items[0];assert.equal(opening.on_hand_after,4);assert.equal(opening.unit_price,'12.34');
 });

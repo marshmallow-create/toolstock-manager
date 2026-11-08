@@ -52,7 +52,7 @@ test('マスタAPIは匿名401、全2ロールの在庫参照、管理者の条�
 
 test('マスタAPIの書込権限、Origin、入力検証、重複コード、未存在ID', async () => {
  for (const role of ['WORKER']) {
-  assert.equal((await post('/api/tools', role, base)).status, 403);
+  assert.equal((await post('/api/tools/' + toolId, undefined, { ...base, active: true })).status, 401);
   assert.equal((await post('/api/masters/locations', role, { location_code: 'NO', name: '禁止' })).status, 404);
   assert.equal((await post('/api/tools/' + toolId + '/initial-stock', role, { location_id: locationId, quantity: 1, request_key: randomUUID() })).status, 403);
  }
@@ -63,6 +63,38 @@ test('マスタAPIの書込権限、Origin、入力検証、重複コード、�
  assert.equal((await request('/api/tools/' + randomUUID(), 'ADMIN')).status, 404);
  assert.equal((await request('/api/masters/users', 'ADMIN')).status, 404);
  assert.equal((await request('/api/tools?page=bad', 'ADMIN')).status, 400);
+});
+
+test('作業者が工具詳細から編集画面を開き保存でき、非公開の単価を保持する', async () => {
+ const service=new MastersService(fixture.db);
+ const tool=await service.createTool(fixture.tokens.ADMIN,{...base,tool_code:'WORKER-EDIT',unit_price:'987.65',on_hand:7});
+ const detail=await (await request('/tools/'+tool.id,'WORKER')).text();
+ assert.ok(detail.includes('href="/tools/'+tool.id+'/edit"'));
+ const page=await request('/tools/'+tool.id+'/edit','WORKER');assert.equal(page.status,200);
+ const html=await page.text();const main=html.slice(html.indexOf('<main'),html.indexOf('</main>'));
+ assert.ok(!main.includes('name="unit_price"'));assert.ok(!html.includes('987.65'));
+ const response=await form('/api/tools/'+tool.id,'WORKER',{...base,tool_code:tool.tool_code,active:'true',name:'作業者編集済み',on_hand:'9',expected_on_hand:'7'});
+ assert.equal(response.status,303);
+ const after=await service.toolDetail(fixture.tokens.ADMIN,tool.id);
+ assert.equal(after.name,'作業者編集済み');assert.equal(after.on_hand,9);assert.equal(after.unit_price,'987.65');
+ const json=await post('/api/tools/'+tool.id,'WORKER',{...base,tool_code:tool.tool_code,active:true,name:'API編集済み'});
+ assert.equal(json.status,200);assert.ok(!(await json.text()).includes('987.65'));
+});
+
+test('作業者のメニュー・登録画面・フォーム送信から工具登録できる', async () => {
+ const dashboard = await (await request('/dashboard', 'WORKER')).text();
+ assert.match(dashboard, /href="\/tools\/new"/); assert.ok(!dashboard.includes('href="/admin/users"'));
+ const page = await request('/tools/new', 'WORKER'); assert.equal(page.status, 200);
+ const html = await page.text(); assert.ok(html.includes('action="/api/tools"')); assert.ok(html.includes('name="on_hand"'));
+ const response = await form('/api/tools', 'WORKER', { tool_code: 'WORKER-CREATE', name: '作業者登録工具', category: 'DRILL', on_hand: '6', order_quantity: '3', reorder_point: '5', unit_price: '123.45', shelf_code: 'W-01', department: '17361' });
+ assert.equal(response.status, 303); assert.equal(new URL(response.headers.get('location')!).pathname, '/dashboard');
+ const tool = await fixture.db.tool.findUniqueOrThrow({ where: { tool_code: 'WORKER-CREATE' } });
+ const detail = await new MastersService(fixture.db).toolDetail(fixture.tokens.ADMIN, tool.id);
+ assert.equal(detail.on_hand, 6); assert.equal(detail.order_quantity, 3); assert.equal(detail.policy?.reorder_point, 5);
+ assert.equal(detail.unit_price, '123.45'); assert.equal(detail.department, '17361'); assert.equal(detail.shelf_code, 'W-01');
+ assert.equal((await post('/api/tools/' + tool.id, 'WORKER', { ...base, tool_code: tool.tool_code, unit: detail.unit, active: true })).status, 200);
+ assert.equal((await post('/api/tools', undefined, { ...base, tool_code: 'ANONYMOUS' })).status, 401);
+ assert.equal((await post('/api/tools', 'WORKER', { ...base, tool_code: 'BAD-ORIGIN' }, 'https://evil.invalid')).status, 403);
 });
 
 test('APIから初期在庫を登録し、再送・異内容再送・別キー再登録を制御する', async () => {
@@ -88,11 +120,12 @@ test('工具検索・詳細・編集・マスタ画面は認証と権限で表�
  const list = await request('/dashboard?tool_code=HTTP-TOOL&name=' + encodeURIComponent('架空ドリル'), 'WORKER'); assert.equal(list.status, 200); assert.match(await list.text(), /HTTP架空ドリル/);
  const empty = await request('/dashboard?q=DOES-NOT-EXIST', 'WORKER'); assert.match(await empty.text(), /該当する工具はありません/);
  const detail = await request('/tools/' + toolId, 'WORKER'); assert.equal(detail.status, 200);
- const html = await detail.text(); assert.match(html, /HTTP架空棚/); assert.ok(!html.includes('1234.56')); assert.ok(!html.includes('HTTP架空商社'));
+ const html = await detail.text(); assert.match(html, /工具情報/); assert.ok(!html.includes('保管場所別在庫')); assert.ok(!html.includes('select name="location_id"')); assert.ok(!html.includes('1234.56')); assert.ok(!html.includes('HTTP架空商社'));
  const administrator = await request('/tools/' + toolId, 'ADMIN'); const adminHtml=await administrator.text(); assert.ok(!adminHtml.includes('supplier-items')); assert.ok(!adminHtml.includes('name="supplier_id"'));
  const editPrice=await request('/tools/'+toolId+'/edit','ADMIN');assert.match(await editPrice.text(),/name="unit_price"[^>]*value="1234\.56"/);
  for (const role of ['WORKER']) {
-  for (const path of ['/tools/new', '/tools/' + toolId + '/edit']) assert.equal((await request(path, role)).status, 307);
+  assert.equal((await request('/tools/new', role)).status, 200);
+  assert.equal((await request('/tools/' + toolId + '/edit', role)).status, 200);
  }
  assert.equal((await request('/admin/masters', 'ADMIN_ALT')).status, 404);
  assert.equal((await request('/tools/' + randomUUID(), 'ADMIN')).status, 404);
@@ -104,8 +137,8 @@ test('工具検索・詳細・編集・マスタ画面は認証と権限で表�
  const categoryMatch = await request('/dashboard?tool_code=HTTP-TOOL&category=DRILL', 'WORKER');
  const categoryHtml = await categoryMatch.text();
  assert.match(categoryHtml, /HTTP架空ドリル/);
- assert.match(categoryHtml, />DRILL<\/td>/);
- const categoryMiss = await request('/api/tools?tool_code=HTTP-TOOL&category=OTHER', 'WORKER');
+ assert.match(categoryHtml, />ドリル<\/td>/);
+ const categoryMiss = await request('/api/tools?tool_code=HTTP-TOOL&category=TAP', 'WORKER');
  assert.deepEqual((await categoryMiss.json()).tools, []);
 });
 
@@ -125,16 +158,16 @@ test('新規登録画面の一覧と同じ項目から登録しカテゴリー�
  const html = await page.text();
  for (const label of ['品目コード', '品目名', 'カテゴリー', '在庫', '発注済み', '発注ライン', '発注数', '単価', '部門', '棚番']) assert.ok(html.includes(label), label);
  assert.ok(!html.includes('工具全体の在庫方針'));
- const created = await form('/api/tools', 'ADMIN', { tool_code: 'LIST-FORM', name: '一覧形式の工具', category: '切削工具', on_hand: '17', reorder_point: '4', order_quantity: '6', unit_price: '456.78', department: '組立部', shelf_code: 'SHELF-FORM' });
+ const created = await form('/api/tools', 'ADMIN', { tool_code: 'LIST-FORM', name: '一覧形式の工具', category: 'DRILL', on_hand: '17', reorder_point: '4', order_quantity: '6', unit_price: '456.78', department: '17362', shelf_code: 'SHELF-FORM' });
  assert.equal(created.status, 303);
  assert.equal(created.headers.get('location'), origin + '/dashboard?saved=1');
  const listed = await request('/api/tools?tool_code=LIST-FORM', 'ADMIN');
  const row = (await listed.json()).tools[0];
  assert.equal(row.on_hand, 17); assert.equal(row.reorder_point, 4); assert.equal(row.unit_price, '456.78'); assert.equal(row.order_quantity, 6); assert.equal(row.on_order, 0);
- assert.equal(row.category, '切削工具'); assert.equal(row.department, '組立部'); assert.deepEqual(row.shelf_codes, ['SHELF-FORM']);
+ assert.equal(row.category, 'DRILL'); assert.equal(row.department, '17362'); assert.deepEqual(row.shelf_codes, ['SHELF-FORM']);
  const list = await request('/dashboard?tool_code=LIST-FORM', 'ADMIN');
  const listHtml = await list.text();
- for (const value of ['一覧形式の工具', '組立部', 'SHELF-FORM', '456.78']) assert.ok(listHtml.includes(value));
+ for (const value of ['一覧形式の工具', '17362', 'SHELF-FORM', '456.78']) assert.ok(listHtml.includes(value));
  const worker = await request('/api/tools?tool_code=LIST-FORM', 'WORKER');
  assert.equal((await worker.json()).tools[0].unit_price, null);
  const editPage = await request('/tools/' + row.id + '/edit', 'ADMIN');
@@ -143,7 +176,7 @@ test('新規登録画面の一覧と同じ項目から登録しカテゴリー�
  assert.equal(changed.status, 303);
  const after = (await (await request('/api/tools?tool_code=LIST-FORM', 'ADMIN')).json()).tools[0];
  assert.equal(after.shelf_code, 'SHELF-CHANGED'); assert.equal(after.on_hand, 17);
- const other = await new MastersService(fixture.db).createTool(fixture.tokens.ADMIN, { tool_code: 'OTHER-LEDGER', name: '別工具', on_hand: 3, shelf_code: 'OTHER-SHELF' });
+ const other = await new MastersService(fixture.db).createTool(fixture.tokens.ADMIN, { tool_code: 'OTHER-LEDGER', category: 'DRILL', name: '別工具', on_hand: 3, shelf_code: 'OTHER-SHELF' });
  const ownStock = await fixture.db.stockBalance.findFirstOrThrow({ where: { tool_id: row.id } });
  const otherStock = await fixture.db.stockBalance.findFirstOrThrow({ where: { tool_id: other.id } });
  for (const mode of ['issue', 'receive']) {
@@ -181,13 +214,66 @@ test('コード入力のHTML patternがブラウザのUnicode Sets構文で有�
 test('retired equipment supplier and purchasing-condition APIs return 404',async()=>{for(const role of [undefined,'WORKER','ADMIN'])for(const path of ['/api/masters/machines','/api/masters/suppliers','/api/tools/'+toolId+'/supplier-items','/api/tools/'+toolId+'/supplier-items/'+randomUUID()]){assert.equal((await request(path,role)).status,404);assert.equal((await post(path,role,{})).status,404);}const html=await (await request('/admin/masters','ADMIN')).text();assert.ok(!html.includes('name="machine_code"'));assert.ok(!html.includes('name="supplier_code"'));});
 
 
-test('all pages use the dashboard workspace frame and authenticated controls',async()=>{
+test('ログインは中央カード、業務画面は共通フレームと認証操作を表示する',async()=>{
  const baseline=await (await request('/dashboard','ADMIN')).text();const mainClass=baseline.match(/<main[^>]*class="([^"]+)"/)?.[1];const titleClass=baseline.match(/<h1[^>]*class="([^"]+)"/)?.[1];assert.ok(mainClass);assert.ok(titleClass);
  for(const path of ['/login','/dashboard','/history','/tools/new','/tools/'+toolId,'/tools/'+toolId+'/edit','/admin/users','/missing-workspace-page']){
   const response=await request(path,'ADMIN');assert.equal(response.status,path==='/missing-workspace-page'?404:200,path);const html=await response.text();
-  assert.equal(html.match(/<main[^>]*class="([^"]+)"/)?.[1],mainClass,path);
+  if(path==='/login') { assert.ok(html.includes('max-w-md')); assert.ok(html.includes('min-h-dvh')); }
+  else assert.equal(html.match(/<main[^>]*class="([^"]+)"/)?.[1],mainClass,path);
   assert.equal(html.match(/<h1[^>]*class="([^"]+)"/)?.[1],titleClass,path);
   assert.equal([...html.matchAll(/<main\b/g)].length,1,path);
   if(path!=='/login'){assert.ok(html.includes('action="/api/auth/logout"'),path);assert.ok(html.includes('aria-label="ログイン情報"'),path);}
+ }
+});
+
+test('編集フォームの在庫・発注ライン・発注数が保存され不要な入力は表示しない', async () => {
+ const service = new MastersService(fixture.db);
+ const tool = await service.createTool(fixture.tokens.ADMIN, { ...base, tool_code: 'EDIT-FIELDS', on_hand: 7, order_quantity: 3 });
+ const html = await (await request('/tools/' + tool.id + '/edit', 'ADMIN')).text();
+ const main = html.slice(html.indexOf('<main'), html.indexOf('</main>'));
+ for (const [field, value] of [['on_hand', '7'], ['order_quantity', '3'], ['reorder_point', '5']]) assert.match(main, new RegExp('name="' + field + '"[^>]*value="' + value + '"'));
+ for (const removed of ['メーカー（任意）', '型番（任意）', '数量単位（例：本、個）', '工具全体の在庫方針', '工具番号は変更できません。']) assert.ok(!main.includes(removed));
+ const inputs = Object.fromEntries([...main.matchAll(/<input\b[^>]*>/g)].map(([tag]) => [tag.match(/name="([^"]+)"/)?.[1], tag.match(/value="([^"]*)"/)?.[1] ?? '']).filter(([name]) => name));
+ for (const [, name, options] of main.matchAll(/<select\b[^>]*name="([^"]+)"[^>]*>([\s\S]*?)<\/select>/g)) inputs[name] = options.match(/<option\b[^>]*value="([^"]*)"[^>]*selected=""/)?.[1] ?? options.match(/<option\b[^>]*value="([^"]*)"/)?.[1] ?? '';
+ const response = await form('/api/tools/' + tool.id, 'ADMIN', { ...inputs, active: 'true', on_hand: '9', reorder_point: '4', order_quantity: '8' });
+ assert.equal(response.status, 303); assert.equal(new URL(response.headers.get('location')!).pathname, '/tools/' + tool.id);
+ const detail = await service.toolDetail(fixture.tokens.ADMIN, tool.id);
+ assert.equal(detail.on_hand, 9); assert.equal(detail.order_quantity, 8); assert.equal(detail.policy?.reorder_point, 4);
+ assert.equal(detail.manufacturer, base.manufacturer); assert.equal(detail.model, base.model); assert.equal(detail.unit, base.unit);
+});
+
+test('カテゴリーと部門は指定候補の選択式で候補外の保存を拒否する', async () => {
+ for (const path of ['/tools/new', '/tools/' + toolId + '/edit', '/dashboard', '/history']) {
+  const html = await (await request(path, 'ADMIN')).text();
+  const main = html.slice(html.indexOf('<main'), html.indexOf('</main>'));
+  const categories = main.match(/<select\b[^>]*name="category"[^>]*>([\s\S]*?)<\/select>/)?.[1]; assert.ok(categories, path);
+  assert.deepEqual([...categories.matchAll(/<option\b[^>]*value="([^"]+)"/g)].map(match => match[1]), ['DRILL', 'END_MILL', 'TAP', 'REAMER', 'INSERT']);
+  for (const label of ['ドリル', 'エンドミル', 'タップ', 'リーマ', 'チップ']) assert.ok(categories.includes('>' + label + '</option>'));
+  if (path === '/tools/new' || path.endsWith('/edit')) {
+   const departments = main.match(/<select\b[^>]*name="department"[^>]*>([\s\S]*?)<\/select>/)?.[1]; assert.ok(departments);
+   assert.deepEqual([...departments.matchAll(/<option\b[^>]*value="([^"]+)"/g)].map(match => match[1]), ['17314', '17361', '17362', '17363']);
+  }
+ }
+ for (const invalid of [{ category: 'その他' }, { department: '17360' }]) {
+  assert.equal((await post('/api/tools', 'ADMIN', { ...base, tool_code: 'INVALID-OPTIONS', ...invalid })).status, 400);
+  assert.equal((await post('/api/tools/' + toolId, 'ADMIN', { ...base, active: true, ...invalid })).status, 400);
+ }
+});
+
+test('工具変更履歴は入出庫の上に日時・変更内容・操作者を表示する', async () => {
+ const service = new MastersService(fixture.db);
+ const input = { ...base, tool_code: 'CHANGE-HISTORY', on_hand: 5, unit_price: '876.54', shelf_code: 'A-01' };
+ const tool = await service.createTool(fixture.tokens.ADMIN, input);
+ await service.updateTool(fixture.tokens.ADMIN, tool.id, { ...input, active: true, shelf_code: 'B-02', unit_price: '987.65' });
+ for (const role of ['ADMIN', 'WORKER']) {
+  const response = await request('/tools/' + tool.id, role); assert.equal(response.status, 200);
+  const html = await response.text(), main = html.slice(html.indexOf('<main'), html.indexOf('</main>'));
+  const history = main.match(/<section\b[^>]*aria-labelledby="tool-change-history"[^>]*>([\s\S]*?)<\/section>/)?.[1]; assert.ok(history);
+  assert.ok(main.indexOf('id="tool-information"') < main.indexOf('id="tool-change-history"'));
+  assert.ok(main.indexOf('id="tool-change-history"') < main.indexOf('aria-label="入出庫"'));
+  for (const label of ['変更日時', '変更内容', '操作者', 'A-01', 'B-02', 'ADMIN']) assert.ok(history.includes(label), label);
+  assert.match(history, /\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}/);
+  if (role === 'WORKER') { assert.ok(!html.includes('876.54')); assert.ok(!html.includes('987.65')); }
+  else { assert.ok(history.includes('876.54')); assert.ok(history.includes('987.65')); }
  }
 });

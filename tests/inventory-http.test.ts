@@ -81,7 +81,7 @@ test('tool detail provides both inventory forms and independent operation pages 
   for (const mode of ['receive', 'issue']) assert.match(content, new RegExp('action="/api/inventory/' + mode + '"'));
  }
  const response = await request('/tools/' + toolId, 'WORKER'); assert.equal(response.status, 200); const html = await response.text();
- assert.ok(!html.includes('name="machine_id"'));assert.ok(!html.includes('name="reason"')); const locationSelect = html.match(/<select\b[^>]*name="location_id"[^>]*>(.*?)<\/select>/s)?.[1] ?? ""; assert.ok(locationSelect.includes('value="' + locationId + '"')); assert.match(locationSelect, /<option[^>]*selected=""/); assert.match(html, /出庫後の見込み/); assert.match(html, /履歴検証棚/);
+ assert.ok(!html.includes('name="machine_id"'));assert.ok(!html.includes('name="reason"')); assert.ok(!html.match(/<select\b[^>]*name="location_id"/)); assert.match(html, new RegExp('type="hidden"[^>]*name="location_id"[^>]*value="' + locationId + '"')); assert.match(html, /出庫後の見込み/); assert.ok(html.includes('id="inventory-receive"')); assert.ok(html.includes('id="inventory-issue"'));
  assert.equal((await request('/tools/bad', 'WORKER')).status, 404); assert.equal((await request('/tools/' + randomUUID(), 'WORKER')).status, 404);
  const otherIssue = await fixture.db.inventoryTransaction.findFirstOrThrow({ where: { tool_id: toolId, actor_user_id: fixture.users.ADMIN, type: 'ISSUE' } });
  const allowedReversal = await fixture.db.inventoryTransaction.findFirstOrThrow({ where: { tool_id: toolId, actor_user_id: fixture.users.ADMIN, type: 'REVERSAL', quantity: {gt:0} } });
@@ -115,6 +115,27 @@ test('空の履歴検索条件を許可し、失効したセッションは在�
 });
 test('stocktaking endpoints and pages are retired',async()=>{for(const role of [undefined,'WORKER','ADMIN']){assert.equal((await post('/api/inventory/adjust',role,{})).status,404);assert.equal((await request('/inventory/adjust',role)).status,404);}for(const action of ['issue','receive']){const html=await (await request('/tools/'+toolId,'WORKER')).text();assert.ok(!html.includes('name="machine_id"'));assert.ok(!html.includes('name="reason"'));}});
 
+
+test('履歴の品目コード・カテゴリー・操作者の検索とページ切り替え', async () => {
+ const tool = await new MastersService(fixture.db).createTool(fixture.tokens.ADMIN, { tool_code: 'HISTORY-FILTER', name: '履歴検索テスト工具', category: 'DRILL', on_hand: 0 });
+ const stock = await fixture.db.stockBalance.findFirstOrThrow({ where: { tool_id: tool.id } });
+ await fixture.db.inventoryTransaction.createMany({ data: Array.from({ length: 51 }, () => ({ tool_id: tool.id, location_id: stock.location_id, actor_user_id: fixture.users.WORKER, type: 'ISSUE' as const, quantity: -1, on_hand_after: 0, idempotency_key: randomUUID() })) });
+ const query = new URLSearchParams({ tool_code: 'history-filter', category: 'DRILL', actor_user_id: fixture.users.WORKER });
+ for (const role of ['ADMIN', 'WORKER']) {
+  const response = await request('/history?' + query, role); assert.equal(response.status, 200);
+  const html = await response.text(), form = html.match(/<form[^>]*action="\/history"[^>]*>([\s\S]*?)<\/form>/)?.[1]; assert.ok(form);
+  for (const name of ['tool_code', 'category', 'actor_user_id']) assert.ok(form.includes('name="' + name + '"'));
+  assert.ok(form.indexOf('name="tool_code"') < form.indexOf('name="category"'));
+  assert.ok(form.indexOf('name="category"') < form.indexOf('name="actor_user_id"'));
+  assert.ok(!form.includes('name="tool_id"')); assert.ok(!form.includes('>工具<'));
+  const next = [...html.matchAll(/href="([^"]+)"/g)].map(match => match[1].replaceAll('&amp;', '&')).find(href => href.includes('page=2'));
+  assert.ok(next); const params = new URL(next, origin).searchParams;
+  for (const [key, value] of query) assert.equal(params.get(key), value);
+  const api = await (await request('/api/history?' + query + '&page=2', role)).json(); assert.equal(api.total, 51); assert.equal(api.items.length, 1); assert.equal(api.items[0].tool.id, tool.id);
+ }
+ const missing = new URLSearchParams(query); missing.set('category', 'TAP');
+ assert.equal((await (await request('/api/history?' + missing, 'ADMIN')).json()).total, 0);
+});
 
 test('history uses workspace layout chronological column order and price range privacy',async()=>{
  await fixture.db.tool.update({where:{id:toolId},data:{unit_price:'210.50'}});

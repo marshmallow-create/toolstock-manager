@@ -1,4 +1,5 @@
 import { AuthError } from '../auth/service';
+import { categoryCode, toolDepartments } from '../tool-options';
 export type Input = Record<string, unknown>;
 export type Kind = 'locations';
 export const codeFields = { locations: 'location_code' } as const;
@@ -36,11 +37,22 @@ export function unchangedCode(input: Input, field: string, before: string) {
  if (input[field] !== undefined && code(input[field]) !== before) throw new AuthError(400, '登録済みコードは変更できません');
 }
 export function toolData(input: Input, creating: boolean, existingShelf = '') {
- return { name: text(input.name, '品目名', 100), category: text(creating ? input.category ?? '未分類' : input.category, '分類', 64), manufacturer: text(input.manufacturer, 'メーカー', 100, true), model: text(input.model, '型番', 100, true), unit: text(creating ? input.unit ?? '個' : input.unit, '単位', 16), active: creating && input.active === undefined ? true : boolean(input.active),
-  ...(creating || input.department !== undefined ? { department: text(input.department, '部門', 100, true) } : {}),
+ return { name: text(input.name, '品目名', 100), category: categoryValue(input.category), manufacturer: text(input.manufacturer, 'メーカー', 100, true), model: text(input.model, '型番', 100, true), unit: text(creating ? input.unit ?? '個' : input.unit, '単位', 16), active: creating && input.active === undefined ? true : boolean(input.active),
+  ...(creating || input.department !== undefined ? { department: departmentValue(input.department) } : {}),
   ...(creating || input.shelf_code !== undefined ? { shelf_code: text(input.shelf_code, '棚番', Math.max(100, existingShelf.length), true) } : {}),
   ...(input.unit_price !== undefined ? { unit_price: price(input.unit_price) } : {}),
  };
+}
+export function categoryValue(value: unknown, optional = false) {
+ if (optional && (value === undefined || value === '')) return '';
+ const category = categoryCode(value);
+ if (!category) throw new AuthError(400, 'カテゴリーはドリル・エンドミル・タップ・リーマ・チップから選択してください');
+ return category;
+}
+export function departmentValue(value: unknown) {
+ const department = text(value, '部門', 100, true);
+ if (department && !toolDepartments.some(option => option === department)) throw new AuthError(400, '部門は17314・17361・17362・17363から選択してください');
+ return department;
 }
 export function price(value: unknown) {
  if (typeof value !== 'string' || !/^\d{1,12}(?:\.\d{1,2})?$/.test(value)) throw new AuthError(400, '単価は整数部12桁、小数部2桁以内の0以上の金額です');
@@ -49,7 +61,7 @@ export function price(value: unknown) {
 export function policyData(input: Input, creating: boolean) {
  const fields = ['safety_stock', 'reorder_point', 'target_stock'] as const;
  const empty = creating && fields.every(key => input[key] === undefined);
- const lineOnly = creating && input.reorder_point !== undefined && input.safety_stock === undefined && input.target_stock === undefined;
+ const lineOnly = input.reorder_point !== undefined && input.safety_stock === undefined && input.target_stock === undefined;
  const values = lineOnly ? { safety_stock: 0, reorder_point: input.reorder_point, target_stock: input.reorder_point } : input;
  const [safety_stock, reorder_point, target_stock] = fields.map(key => empty ? 0 : integer(values[key], '在庫方針'));
  if (safety_stock > reorder_point || reorder_point > target_stock) throw new AuthError(400, '安全在庫≦発注点≦目標在庫で設定してください');

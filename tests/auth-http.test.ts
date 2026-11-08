@@ -84,6 +84,43 @@ test('ユーザー管理画面は2ロールを選択でき、廃止ロールをA
  assert.equal((await db.user.findUniqueOrThrow({where:{id:user.id}})).role,'WORKER');
  assert.equal(await db.user.count({where:{employee_code:{startsWith:'RETIRED-'}}}),0);
 });
+test('ユーザー一覧を社員IDで部分一致検索でき、該当なしを表示する',async()=>{
+ const cookie=await login('HTTP-ADMIN');
+ const listing=async(query:string)=>{
+  const response=await request('/admin/users?'+new URLSearchParams({employee_code:query}),{headers:{Cookie:cookie}});
+  assert.equal(response.status,200);
+  const html=await response.text();
+  const list=html.match(/<ul class="divide-y divide-slate-200">(.*?)<\/ul>/s);
+  assert.ok(list,'登録済みユーザーをリスト表示する');
+  return {html,list:list[1]};
+ };
+ const all=await listing('');
+ assert.match(all.list,/HTTP-A/);assert.match(all.list,/HTTP-ADMIN/);
+ assert.match(all.list,/<details\b/);assert.doesNotMatch(all.list,/<details\b[^>]*\bopen(?:\s|=|>)/);
+ const found=await listing('  http-adm  ');
+ assert.match(found.list,/HTTP-ADMIN/);
+ const worker=await db.user.findUniqueOrThrow({where:{employee_code:'HTTP-A'}});
+ assert.ok(!found.list.includes('/api/admin/users/'+worker.id));
+ const missing=await listing('NO-SUCH-EMPLOYEE');
+ assert.equal(missing.list,'');assert.match(missing.html,/該当する社員IDのユーザーはいません。/);
+});
+
+test('メニューはマイページだけに表示し、ほかの画面はマイページへ戻れる',async()=>{
+ const cookie=await login('HTTP-ADMIN');
+ for(const path of ['/dashboard','/admin/users','/history','/tools/new']){
+  const response=await request(path,{headers:{Cookie:cookie}});assert.equal(response.status,200);
+  const html=await response.text();
+  if(path==='/dashboard'){
+   assert.match(html,/aria-label="利用できる機能"/);
+   assert.doesNotMatch(html,/>マイページへ戻る<\/a>/);
+  }else{
+   assert.doesNotMatch(html,/aria-label="利用できる機能"/);
+   assert.match(html,/<a\b[^>]*href="\/dashboard"[^>]*>マイページへ戻る<\/a>/);
+   assert.ok(html.indexOf('マイページへ戻る')<html.indexOf('<h1'));
+  }
+ }
+});
+
 test('管理者の登録・無効化・権限変更・ログアウト・期限切れをHTTP経由で検証',async()=>{
  const cookie=await login('HTTP-ADMIN');
  const created=await post('/api/admin/users',cookie,{employee_code:'HTTP-NEW',name:'架空ユーザー',role:'WORKER',password});assert.equal(created.status,201);

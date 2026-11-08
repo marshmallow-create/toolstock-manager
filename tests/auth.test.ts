@@ -46,7 +46,7 @@ test('パスワードはsalt付きハッシュで保持し、不正パスワー�
 });
 test('2ロールの全操作が仕様の権限表と一致する',()=>{
   const expected = [
-    ['inventory:read','inventory:issue','inventory:receive','history:own'],
+    ['inventory:read','inventory:issue','inventory:receive','history:own','tools:create','tools:update'],
     Object.keys(permissions),
   ];
   for(let i=0;i<roles.length;i++) for(const permission of Object.keys(permissions))

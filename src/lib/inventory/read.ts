@@ -1,7 +1,8 @@
 import type { PrismaClient, Prisma } from '../../generated/prisma/client';
 import { AuthService, AuthError, type Viewer } from '../auth/service';
 import { can } from '../auth/permissions';
-import { uuid, integer, price } from '../masters/validation';
+import { uuid, integer, price, text, categoryValue } from '../masters/validation';
+import { categoryAliases } from '../tool-options';
 import { calendarDate, optionalId } from './validation';
 import type { Input, HistoryItem, InventoryResult } from './types';
 const transactionSelect={
@@ -37,6 +38,7 @@ function priceBound(value:unknown):string|undefined {
 function cents(value:string){const [whole,fraction='']=value.split('.');return BigInt(whole)*100n+BigInt(fraction.padEnd(2,'0'));}
 export async function listHistory(db:PrismaClient,auth:AuthService,token:string|undefined,query:Input={}){
  const actor=await auth.authenticate(token,'history:own'),tool_id=optionalId(query.tool_id),actor_user_id=optionalId(query.actor_user_id);
+ const toolCode=text(query.tool_code ?? '', '品目コード', 100, true), category=categoryValue(query.category, true);
  if(query.machine_id!==undefined&&query.machine_id!=='')throw new AuthError(400,'設備の検索は廃止されました');
  const from=calendarDate(query.from),to=calendarDate(query.to);
  if(from&&to&&from>to)throw new AuthError(400,'開始日と終了日を確認してください');
@@ -50,7 +52,8 @@ export async function listHistory(db:PrismaClient,auth:AuthService,token:string|
  if(actor_user_id&&!can(actor.role,'history:all')&&actor_user_id!==actor.id)throw new AuthError(403,'他の利用者の履歴は参照できません');
  const page=query.page===undefined||query.page===''?1:integer(query.page,'ページ',1,Number.MAX_SAFE_INTEGER);
  const where:Prisma.InventoryTransactionWhereInput={AND:[scope(actor),{
-  ...(tool_id?{tool_id}:{}),...(actor_user_id&&can(actor.role,'history:all')?{actor_user_id}:{}),
+  ...(tool_id?{tool_id}:{}),...(actor_user_id?{actor_user_id}:{}),
+  ...(toolCode||category?{tool_id_record:{...(toolCode?{tool_code:{contains:toolCode,mode:'insensitive'}}:{}),...(category?{category:{in:categoryAliases(category),mode:'insensitive'}}:{})}}:{}),
   ...(type?{type:type as Prisma.EnumTransactionTypeFilter['equals']}:{}),
   ...(movement?{quantity:movement==='RECEIVE'?{gt:0}:{lt:0}}:{}),
   ...(min!==undefined||max!==undefined?{unit_price:{...(min!==undefined?{gte:min}:{}),...(max!==undefined?{lte:max}:{})}}:{}),
