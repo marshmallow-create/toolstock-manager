@@ -19,7 +19,11 @@
     "auth:setup-dev": "node scripts/run-typescript.mjs setup",
     "test:auth": "node scripts/run-typescript.mjs auth",
     "test:http": "node scripts/run-typescript.mjs http",
-    "test": "npm run test:permissions && npm run test:roles-migration && npm run test:db && npm run test:auth && npm run test:masters && npm run test:inventory && npm run build && npm run test:http && npm run test:masters-http && npm run test:inventory-http",
+    "test": "npm run test:permissions && npm run test:roles-migration && npm run test:db && npm run test:auth && npm run test:masters && npm run test:inventory && npm run test:tool-import && npm run test:data-manager && npm run build && npm run test:http && npm run test:masters-http && npm run test:inventory-http && npm run test:tool-import-http && npm run test:data-manager-http",
+    "test:data-manager": "node scripts/run-typescript.mjs data-manager",
+    "test:data-manager-http": "node scripts/run-typescript.mjs data-manager-http",
+    "test:tool-import": "node scripts/run-typescript.mjs tool-workbook && node scripts/run-typescript.mjs tool-import",
+    "test:tool-import-http": "node scripts/run-typescript.mjs tool-import-http",
     "test:masters": "node scripts/run-typescript.mjs masters",
     "test:masters-http": "node scripts/run-typescript.mjs masters-http",
     "test:inventory": "node scripts/run-typescript.mjs inventory",
@@ -31,10 +35,13 @@
     "@prisma/adapter-pg": "7.3.0",
     "@prisma/client": "7.3.0",
     "dotenv": "17.2.3",
+    "exceljs": "4.4.0",
     "next": "16.1.6",
     "pg": "8.17.2",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "saxes": "6.0.0",
+    "yauzl": "3.4.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.1.18",
@@ -42,7 +49,9 @@
     "@types/pg": "8.16.0",
     "@types/react": "19.2.10",
     "@types/react-dom": "19.2.3",
+    "@types/yauzl": "2.10.3",
     "esbuild": "0.27.7",
+    "jszip": "3.10.1",
     "prisma": "7.3.0",
     "tailwindcss": "4.1.18",
     "typescript": "5.9.3"

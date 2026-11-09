@@ -33,6 +33,10 @@ AuthService / MastersService / InventoryService
 | `src/components/inventory.tsx` | 入出庫履歴の表・日時・取消フォーム |
 | `src/lib/auth/` | パスワード、セッション、権限、ユーザー管理、リクエスト処理 |
 | `src/lib/masters/` | 工具の検証・参照・保存・初期在庫・変更履歴 |
+| `src/lib/masters/tool-import.ts` | 一括行検証・重複検出・全件一括保存 |
+| `src/lib/masters/tool-workbook.ts` | ExcelJSによる.xlsx生成・解析、yauzlによる展開量検査 |
+| `src/lib/masters/import-request.ts` | 通常の入力サイズ上限から分離したmultipart受付 |
+| `src/components/tool-import-form.tsx` | ファイル選択・確認表・確定。Excel処理はサーバーで行う |
 | `src/lib/inventory/` | 入出庫・取消・履歴の検証と処理 |
 | `src/lib/tool-options.ts` | カテゴリーと部門の候補、表示名と保存コードの対応 |
 | `src/lib/db.ts` | DBクライアントの生成・開発時キャッシュ |

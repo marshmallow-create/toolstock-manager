@@ -15,9 +15,9 @@ export function errorResponse(error:unknown) {
  const known=error instanceof AuthError;
  return NextResponse.json({error:known?error.message:'処理に失敗しました。DB接続を確認してください'}, {status:known?error.status:503,headers:{'Cache-Control':'no-store'}});
 }
-export async function readBody(request:Request):Promise<Record<string,unknown>> {
+export async function readBody(request:Request,maxBytes=8192):Promise<Record<string,unknown>> {
  const reader=request.body?.getReader();let text='';let size=0;const decoder=new TextDecoder();
- if(reader) { for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>8192){await reader.cancel();throw new AuthError(413,'入力が長すぎます');}text+=decoder.decode(value,{stream:true});} text+=decoder.decode(); }
+ if(reader) { for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>maxBytes){await reader.cancel();throw new AuthError(413,'入力が長すぎます');}text+=decoder.decode(value,{stream:true});} text+=decoder.decode(); }
  try {
   const type=request.headers.get('content-type')?.split(';')[0];
   if(type==='application/x-www-form-urlencoded') return Object.fromEntries(new URLSearchParams(text));

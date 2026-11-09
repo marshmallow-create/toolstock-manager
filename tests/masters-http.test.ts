@@ -260,7 +260,7 @@ test('カテゴリーと部門は指定候補の選択式で候補外の保存�
  }
 });
 
-test('工具変更履歴は入出庫の上に日時・変更内容・操作者を表示する', async () => {
+test('入出庫・工具情報・工具変更履歴の順に表示し、変更内容と操作者を確認できる', async () => {
  const service = new MastersService(fixture.db);
  const input = { ...base, tool_code: 'CHANGE-HISTORY', on_hand: 5, unit_price: '876.54', shelf_code: 'A-01' };
  const tool = await service.createTool(fixture.tokens.ADMIN, input);
@@ -270,7 +270,7 @@ test('工具変更履歴は入出庫の上に日時・変更内容・操作者�
   const html = await response.text(), main = html.slice(html.indexOf('<main'), html.indexOf('</main>'));
   const history = main.match(/<section\b[^>]*aria-labelledby="tool-change-history"[^>]*>([\s\S]*?)<\/section>/)?.[1]; assert.ok(history);
   assert.ok(main.indexOf('id="tool-information"') < main.indexOf('id="tool-change-history"'));
-  assert.ok(main.indexOf('id="tool-change-history"') < main.indexOf('aria-label="入出庫"'));
+  assert.ok(main.indexOf('aria-label="入出庫"') < main.indexOf('id="tool-information"'));
   for (const label of ['変更日時', '変更内容', '操作者', 'A-01', 'B-02', 'ADMIN']) assert.ok(history.includes(label), label);
   assert.match(history, /\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}/);
   if (role === 'WORKER') { assert.ok(!html.includes('876.54')); assert.ok(!html.includes('987.65')); }

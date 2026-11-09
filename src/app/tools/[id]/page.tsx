@@ -20,22 +20,6 @@ export default async function ToolDetail({ params, searchParams }: { params: Pro
  const changes = await masters().toolChangeHistory(token, id);
  return <WorkspaceShell user={actor} title={tool.tool_code + ' / ' + tool.name}>
   <Messages search={search} />
-  <section aria-labelledby="tool-information" className={'mb-3 ' + panelClass}>
-   <h2 id="tool-information" className="mb-3 text-xl font-bold">工具情報</h2>
-   <ToolStockTable tools={[{ ...tool, reorder_point: tool.policy?.reorder_point ?? null }]} />
-   {editable && <Link href={'/tools/' + tool.id + '/edit'} className="mt-3 inline-block underline">工具情報変更</Link>}
-  </section>
-  <section aria-labelledby="tool-change-history" className={'mb-3 ' + panelClass}>
-   <h2 id="tool-change-history" className="mb-3 text-xl font-bold">工具変更履歴（最大3件）</h2>
-   {changes.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm [&_td]:px-3 [&_td]:py-2 [&_th]:px-3 [&_th]:py-2">
-    <thead><tr>{['変更日時', '変更内容', '操作者'].map(label => <th key={label} scope="col" className="whitespace-nowrap border-b">{label}</th>)}</tr></thead>
-    <tbody>{changes.map(change => <tr key={change.id} className="align-top hover:bg-slate-50">
-     <td className="whitespace-nowrap border-b">{inventoryTime(change.created_at)}</td>
-     <td className="min-w-56 border-b break-words"><ul className="space-y-1">{change.changes.map((content, index) => <li key={index}>{content}</li>)}</ul></td>
-     <td className="whitespace-nowrap border-b">{change.actor.name}<span className="ml-2 text-slate-500">{change.actor.employee_code}</span></td>
-    </tr>)}</tbody>
-   </table></div> : <p className="text-slate-500">工具の変更履歴はありません。</p>}
-  </section>
   <section aria-label="入出庫" className="mb-3 grid max-w-3xl items-start gap-3 sm:grid-cols-2">
    {(['receive', 'issue'] as const).filter(mode => can(actor.role, 'inventory:' + mode)).map(mode => {
     const label = mode === 'receive' ? '入庫' : '出庫';
@@ -46,6 +30,22 @@ export default async function ToolDetail({ params, searchParams }: { params: Pro
      }</div>
     </section>;
    })}
+  </section>
+  <section aria-labelledby="tool-information" className={'mb-3 ' + panelClass}>
+   <h2 id="tool-information" className="mb-3 text-xl font-bold">工具情報</h2>
+   <ToolStockTable tools={[{ ...tool, reorder_point: tool.policy?.reorder_point ?? null }]} />
+   {editable && <Link href={'/tools/' + tool.id + '/edit'} className="mt-3 inline-block underline">工具情報変更</Link>}
+  </section>
+  <section aria-labelledby="tool-change-history" className={'mb-3 ' + panelClass}>
+   <h2 id="tool-change-history" className="mb-3 text-xl font-bold">工具情報変更履歴（最大3件）</h2>
+   {changes.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm [&_td]:px-3 [&_td]:py-2 [&_th]:px-3 [&_th]:py-2">
+    <thead><tr>{['変更日時', '変更内容', '操作者'].map(label => <th key={label} scope="col" className="whitespace-nowrap border-b">{label}</th>)}</tr></thead>
+    <tbody>{changes.map(change => <tr key={change.id} className="align-top hover:bg-slate-50">
+     <td className="whitespace-nowrap border-b">{inventoryTime(change.created_at)}</td>
+     <td className="min-w-56 border-b break-words"><ul className="space-y-1">{change.changes.map((content, index) => <li key={index}>{content}</li>)}</ul></td>
+     <td className="whitespace-nowrap border-b">{change.actor.name}<span className="ml-2 text-slate-500">{change.actor.employee_code}</span></td>
+    </tr>)}</tbody>
+   </table></div> : <p className="text-slate-500">工具の変更履歴はありません。</p>}
   </section>
   <section className="mb-3"><h2 className="mb-3 text-xl font-bold">直近の履歴（最大5件）</h2><HistoryTable items={recent} /></section>
 

@@ -1,7 +1,7 @@
 import { recordedUnitPrice } from '../inventory/snapshot';
 import { randomUUID } from 'node:crypto';
 import type { Prisma, PrismaClient } from '../../generated/prisma/client';
-import { AuthService, AuthError } from '../auth/service';
+import { AuthService, AuthError, type Viewer } from '../auth/service';
 import { can } from '../auth/permissions';
 import { codeFields, kind, uuid, code, integer, toolData, policyData, masterData, unchangedCode, type Input } from './validation';
 
@@ -21,10 +21,12 @@ export async function conflict<T>(operation: () => Promise<T>) {
 }
 export async function createTool(db: PrismaClient, auth: AuthService, token: string | undefined, input: Input) {
  await auth.authenticate(token, 'tools:create');
+ return conflict(() => auth.authorized(token, ['tools:create'], (tx, actor) => createToolInTransaction(tx, actor, input)));
+}
+export async function createToolInTransaction(tx: Prisma.TransactionClient, actor: Viewer, input: Input) {
  const data = { tool_code: code(input.tool_code), ...toolData(input, true) }, policy = policyData(input, true);
  const quantity = input.on_hand === undefined ? 0 : integer(input.on_hand, '在庫');
  const orderQuantity = input.order_quantity === undefined ? 0 : integer(input.order_quantity, '発注数');
- return conflict(() => auth.authorized(token, ['tools:create'], async (tx, actor) => {
   const tool = await tx.tool.create({ data });
   await tx.inventoryPolicy.create({ data: { tool_id: tool.id, ...policy } });
   if (orderQuantity > 0) {
@@ -41,7 +43,6 @@ export async function createTool(db: PrismaClient, auth: AuthService, token: str
   }
   await audit(tx, actor.id, 'TOOL_CREATED', 'tools', tool.id, { after: data, policy });
   return tool;
- }));
 }
 export async function updateTool(db: PrismaClient, auth: AuthService, token: string | undefined, id: string, input: Input) {
  await auth.authenticate(token, 'tools:update');

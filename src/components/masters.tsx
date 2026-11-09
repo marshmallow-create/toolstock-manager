@@ -19,21 +19,22 @@ export function Active({ value = true }: { value?: boolean }) {
 }
 type ToolValues = { tool_code: string; name: string; category: string; manufacturer: string; model: string; unit: string; active: boolean; on_hand: number; order_quantity: number; department?: string; shelf_code?: string; unit_price?: string | null; policy?: { safety_stock: number; reorder_point: number; target_stock: number } | null };
 export function ToolForm({ action, tool }: { action: string; tool?: ToolValues }) {
- if (!tool) return <form action={action} method="post" className={'grid max-w-5xl gap-3 sm:grid-cols-2 lg:grid-cols-3 ' + panelClass}>
+ const formClass = 'grid max-w-3xl gap-3 sm:grid-cols-2 ' + panelClass;
+ if (!tool) return <form action={action} method="post" className={formClass}>
   <Field label="品目コード" name="tool_code" required maxLength={32} pattern="[A-Za-z0-9_\x2D]+" />
   <Field label="品目名" name="name" required maxLength={100} />
   <CategoryField required />
   <NumberField label="在庫" name="on_hand" defaultValue={0} />
-  <label className="grid gap-1">発注済み<output className="rounded border border-slate-200 bg-slate-50 p-2 text-slate-600" title="発注データから自動集計します">0</output></label>
   <NumberField label="発注ライン" name="reorder_point" defaultValue={0} />
   <NumberField label="発注数" name="order_quantity" defaultValue={0} />
   <Field label="単価" name="unit_price" required inputMode="decimal" pattern="[0-9]{1,12}(\.[0-9]{1,2})?" maxLength={15} defaultValue="0.00" />
   <DepartmentField />
   <Field label="棚番" name="shelf_code" maxLength={100} />
-  <p className="text-sm text-slate-600 sm:col-span-2 lg:col-span-3">発注済みは自動集計されます。</p>
-  <button className={buttonClass + ' sm:col-span-2 lg:col-span-3'}>工具を登録する</button>
+  <label className="grid gap-1">発注済み<output className="rounded border border-slate-200 bg-slate-50 px-3 py-1.5 text-slate-600" title="発注データから自動集計します">0</output></label>
+  <p className="text-sm text-slate-600 sm:col-span-2">発注済みは自動集計されます。</p>
+  <button className={buttonClass + ' sm:col-span-2'}>工具を登録する</button>
  </form>;
- return <form action={action} method="post" className={'grid max-w-3xl gap-3 sm:grid-cols-2 ' + panelClass}>
+ return <form action={action} method="post" className={formClass}>
   <Field label="品目コード" name="tool_code" required maxLength={32} pattern="[A-Za-z0-9_\x2D]+" defaultValue={tool?.tool_code} readOnly={!!tool} />
   <Field label="品目名" name="name" required maxLength={100} defaultValue={tool?.name} />
   <CategoryField required value={tool.category} />

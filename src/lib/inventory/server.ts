@@ -12,6 +12,9 @@ export function inventoryMutation(request: Request, action: InventoryAction) {
  };
  return mutate(request, '/history', errorPath, async body => {
   const transaction = await inventory()[action](requestToken(request), body);
-  return { body: { transaction }, redirectTo: '/history?' + new URLSearchParams({ tool_id: transaction.tool_id, saved: '1' }) };
+  const redirectTo = action === 'reverse'
+   ? '/history?' + new URLSearchParams({ tool_id: transaction.tool_id, saved: '1' })
+   : '/tools/' + encodeURIComponent(transaction.tool_id) + '?saved=1';
+  return { body: { transaction }, redirectTo };
  });
 }

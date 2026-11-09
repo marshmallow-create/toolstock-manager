@@ -90,18 +90,19 @@ test('tool detail provides both inventory forms and independent operation pages 
  const dashboard = await request('/dashboard', 'WORKER'); const dashboardHtml = await dashboard.text(); assert.doesNotMatch(dashboardHtml, /href="\/inventory\/(issue|receive)/); assert.match(dashboardHtml, /href="\/history"/);
 });
 
-test('HTML入出庫と取消は履歴一覧へ戻り、取消は一覧から実行できる', async () => {
+test('HTML入出庫は工具詳細へ戻り、取消は履歴一覧から実行できる', async () => {
  const input = issueInput();
  const response = await form('/api/inventory/issue', 'WORKER', Object.fromEntries(Object.entries(input).map(([key, value]) => [key, String(value)]))); assert.equal(response.status, 303);
- const target = new URL(response.headers.get('location')!); assert.equal(target.pathname, '/history'); assert.equal(target.searchParams.get('tool_id'), toolId); assert.equal(target.searchParams.get('saved'), '1');
+ const target = new URL(response.headers.get('location')!); assert.equal(target.pathname, '/tools/' + toolId); assert.equal(target.searchParams.get('saved'), '1');
  const id = (await fixture.db.inventoryTransaction.findUniqueOrThrow({ where: { idempotency_key: 'phase4:' + input.request_key } })).id;
- const list = await request(target.pathname + target.search, 'ADMIN'); const html = await list.text();
+ const detail = await request(target.pathname + target.search, 'WORKER'); assert.equal(detail.status, 200); assert.ok((await detail.text()).includes('id="inventory-issue"'));
+ const list = await request('/history?tool_id=' + toolId, 'ADMIN'); const html = await list.text();
  assert.ok(html.includes('action="/api/inventory/reverse"')); assert.ok(html.includes('value="' + id + '"'));
  for (const role of [undefined, 'WORKER', 'ADMIN']) assert.equal((await request('/history/' + id, role)).status, 404);
  assert.equal(/href="\/history\//.test(html), false);
  const worker = await request('/history?tool_id=' + toolId, 'WORKER'); assert.ok(!(await worker.text()).includes('action="/api/inventory/reverse"'));
  const reversed = await form('/api/inventory/reverse', 'ADMIN', { request_key: randomUUID(), transaction_id: id, reason: 'フォーム取消' }); assert.equal(reversed.status, 303); assert.equal(new URL(reversed.headers.get('location')!).pathname, '/history');
- const received = await form('/api/inventory/receive', 'WORKER', { request_key: randomUUID(), tool_id: toolId, location_id: locationId, quantity: '2', reason: 'フォーム補充' }); assert.equal(received.status, 303);
+ const received = await form('/api/inventory/receive', 'WORKER', { request_key: randomUUID(), tool_id: toolId, location_id: locationId, quantity: '2', reason: 'フォーム補充' }); assert.equal(received.status, 303); assert.equal(new URL(received.headers.get('location')!).pathname, '/tools/' + toolId);
  const invalid = await form('/api/inventory/issue', 'WORKER', { request_key: randomUUID(), tool_id: toolId, location_id: locationId, quantity: '0' }); assert.equal(invalid.status, 303);
  const error = new URL(invalid.headers.get('location')!); assert.equal(error.pathname, '/tools/' + toolId); assert.equal(error.searchParams.get('operation'), 'issue'); assert.ok(error.searchParams.get('error'));
 });

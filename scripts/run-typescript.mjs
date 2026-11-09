@@ -5,6 +5,11 @@ import { resolve } from 'node:path';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const targets = {
+  'data-manager': { entry: 'tests/data-manager.test.ts', args: ['--test'] },
+  'data-manager-http': { entry: 'tests/data-manager-http.test.ts', args: ['--test'] },
+  'tool-import': { entry: 'tests/tool-import.test.ts', args: ['--test'] },
+  'tool-workbook': { entry: 'tests/tool-workbook.test.ts', args: ['--test'] },
+  'tool-import-http': { entry: 'tests/tool-import-http.test.ts', args: ['--test'] },
   permissions: { entry: 'tests/permissions.test.ts', args: ['--test'] },
   'roles-migration': { entry: 'tests/roles-migration.test.ts', args: ['--test'] },
   inventory: { entry: 'tests/inventory.test.ts', args: ['--test'] },
