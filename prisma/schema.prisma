@@ -33,6 +33,7 @@ enum CandidateStatus {
  DISMISSED
 }
 model User {
+ deleted_at DateTime? @db.Timestamptz(3)
  password_hash String?
  sessions Session[]
  id String @id @default(uuid()) @db.Uuid
@@ -56,8 +57,6 @@ model Tool {
  shelf_code String @default("")
  unit_price Decimal? @db.Decimal(14, 2)
  category String
- manufacturer String
- model String
  unit String
  active Boolean @default(true)
  created_at DateTime @default(now()) @db.Timestamptz(3)
@@ -65,20 +64,9 @@ model Tool {
  stock_balances_tool_id_children StockBalance[] @relation("stock_balances_tool_id")
  inventory_transactions_tool_id_children InventoryTransaction[] @relation("inventory_transactions_tool_id")
  inventory_policies_tool_id_children InventoryPolicy? @relation("inventory_policies_tool_id")
- supplier_items_tool_id_children SupplierItem[] @relation("supplier_items_tool_id")
  purchase_order_items_tool_id_children PurchaseOrderItem[] @relation("purchase_order_items_tool_id")
  reorder_candidates_tool_id_children ReorderCandidate[] @relation("reorder_candidates_tool_id")
  @@map("tools")
-}
-model Machine {
- id String @id @default(uuid()) @db.Uuid
- machine_code String @unique
- name String
- active Boolean @default(true)
- created_at DateTime @default(now()) @db.Timestamptz(3)
- updated_at DateTime @updatedAt @db.Timestamptz(3)
- inventory_transactions_machine_id_children InventoryTransaction[] @relation("inventory_transactions_machine_id")
- @@map("machines")
 }
 model Location {
  id String @id @default(uuid()) @db.Uuid
@@ -109,7 +97,6 @@ model InventoryTransaction {
  tool_id String @db.Uuid
  location_id String @db.Uuid
  actor_user_id String @db.Uuid
- machine_id String? @db.Uuid
  type TransactionType
  quantity Int
  on_hand_after Int?
@@ -122,12 +109,10 @@ model InventoryTransaction {
  tool_id_record Tool @relation("inventory_transactions_tool_id", fields: [tool_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
  location_id_record Location @relation("inventory_transactions_location_id", fields: [location_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
  actor_user_id_record User @relation("inventory_transactions_actor_user_id", fields: [actor_user_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
- machine_id_record Machine? @relation("inventory_transactions_machine_id", fields: [machine_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
  reverses_id_record InventoryTransaction? @relation("inventory_transactions_reverses_id", fields: [reverses_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
  inventory_transactions_reverses_id_children InventoryTransaction? @relation("inventory_transactions_reverses_id")
  @@index([tool_id, created_at])
  @@index([actor_user_id, created_at])
- @@index([machine_id, created_at])
  @@map("inventory_transactions")
 }
 model InventoryPolicy {
@@ -149,25 +134,8 @@ model Supplier {
  active Boolean @default(true)
  created_at DateTime @default(now()) @db.Timestamptz(3)
  updated_at DateTime @updatedAt @db.Timestamptz(3)
- supplier_items_supplier_id_children SupplierItem[] @relation("supplier_items_supplier_id")
  purchase_orders_supplier_id_children PurchaseOrder[] @relation("purchase_orders_supplier_id")
  @@map("suppliers")
-}
-model SupplierItem {
- id String @id @default(uuid()) @db.Uuid
- tool_id String @db.Uuid
- supplier_id String @db.Uuid
- supplier_model String?
- unit_price Decimal @db.Decimal(14, 2)
- order_multiple Int
- lead_time_days Int
- preferred Boolean @default(false)
- created_at DateTime @default(now()) @db.Timestamptz(3)
- updated_at DateTime @updatedAt @db.Timestamptz(3)
- tool_id_record Tool @relation("supplier_items_tool_id", fields: [tool_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
- supplier_id_record Supplier @relation("supplier_items_supplier_id", fields: [supplier_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
- @@unique([tool_id, supplier_id])
- @@map("supplier_items")
 }
 model PurchaseOrder {
  id String @id @default(uuid()) @db.Uuid

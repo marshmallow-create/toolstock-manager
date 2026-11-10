@@ -13,7 +13,7 @@ const transactionSelect={
  inventory_transactions_reverses_id_children:{select:{id:true}},
 } as const satisfies Prisma.InventoryTransactionSelect;
 type Row=Prisma.InventoryTransactionGetPayload<{select:typeof transactionSelect}>;
-const showPrice=(actor:Viewer)=>can(actor.role,'masters:write')||can(actor.role,'orders:read');
+const showPrice=(actor:Viewer)=>can(actor.role,'masters:write');
 async function dtos(db:PrismaClient,rows:Row[],visiblePrice:boolean):Promise<HistoryItem[]> {
  const legacy=rows.filter(row=>row.on_hand_after===null);
  const logs=legacy.length?await db.auditLog.findMany({where:{OR:[

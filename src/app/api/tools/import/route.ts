@@ -10,7 +10,7 @@ export const dynamic='force-dynamic';
 export async function POST(request:Request) {
  try{
   const token=requestToken(request), service=auth();
-  await service.authenticate(token,'tools:create');
+  await service.authenticate(token,'tools:import');
   if(request.headers.get('origin')!==appOrigin())throw new AuthError(403,'送信元を確認できません');
   const {buffer,action}=await readImportFile(request), rows=await parseToolWorkbook(buffer);
   if(action==='commit')return Response.json(await commitToolImport(getDb(),service,token,rows),{status:201,headers:{'Cache-Control':'no-store'}});

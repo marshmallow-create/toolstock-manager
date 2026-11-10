@@ -17,7 +17,7 @@ export function NumberField(props: ComponentProps<'input'> & { label: string }) 
 export function Active({ value = true }: { value?: boolean }) {
  return <label className="grid gap-1">状態<select name="active" defaultValue={String(value)} className={inputClass}><option value="true">有効</option><option value="false">無効</option></select></label>;
 }
-type ToolValues = { tool_code: string; name: string; category: string; manufacturer: string; model: string; unit: string; active: boolean; on_hand: number; order_quantity: number; department?: string; shelf_code?: string; unit_price?: string | null; policy?: { safety_stock: number; reorder_point: number; target_stock: number } | null };
+type ToolValues = { tool_code: string; name: string; category: string; unit: string; active: boolean; on_hand: number; order_quantity: number; department?: string; shelf_code?: string; unit_price?: string | null; policy?: { safety_stock: number; reorder_point: number; target_stock: number } | null };
 export function ToolForm({ action, tool }: { action: string; tool?: ToolValues }) {
  const formClass = 'grid max-w-3xl gap-3 sm:grid-cols-2 ' + panelClass;
  if (!tool) return <form action={action} method="post" className={formClass}>
@@ -42,8 +42,6 @@ export function ToolForm({ action, tool }: { action: string; tool?: ToolValues }
   <NumberField label="発注ライン" name="reorder_point" defaultValue={tool.policy?.reorder_point ?? 0} />
   <NumberField label="発注数" name="order_quantity" defaultValue={tool.order_quantity} />
   <input type="hidden" name="expected_on_hand" value={tool.on_hand} />
-  <input type="hidden" name="manufacturer" value={tool.manufacturer} />
-  <input type="hidden" name="model" value={tool.model} />
   <input type="hidden" name="unit" value={tool.unit} />
   {tool.unit_price !== undefined && <Field label="単価" name="unit_price" required inputMode="decimal" pattern="[0-9]{1,12}(\.[0-9]{1,2})?" maxLength={15} defaultValue={tool.unit_price ?? '0.00'} />}
   <DepartmentField value={tool.department} />
@@ -52,5 +50,3 @@ export function ToolForm({ action, tool }: { action: string; tool?: ToolValues }
   <button className={buttonClass + ' sm:col-span-2'}>{tool ? '変更を保存する' : '工具を登録する'}</button>
  </form>;
 }
-export type MasterRow = { id: string; name: string; active: boolean; location_code: string };
-export const masterCode = (row: MasterRow) => row.location_code;

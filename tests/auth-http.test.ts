@@ -38,8 +38,8 @@ after(async()=>{
  await db?.$disconnect();if(admin){await admin.query('DROP SCHEMA IF EXISTS '+schema+' CASCADE');await admin.end();}
 });
 const request=(path:string,options:RequestInit={})=>fetch(origin+path,{redirect:'manual',...options});
-async function login(code:string){
- const r=await request('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json',Origin:origin},body:JSON.stringify({employee_code:code,password})});
+async function login(code:string,candidatePassword=password){
+ const r=await request('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json',Origin:origin},body:JSON.stringify({employee_code:code,password:candidatePassword})});
  assert.equal(r.status,200,await r.clone().text());
  const cookie=r.headers.get('set-cookie');assert.ok(cookie);assert.match(cookie,/HttpOnly/i);assert.match(cookie,/SameSite=Lax/i);
  return cookie.split(';')[0];
@@ -140,6 +140,23 @@ test('管理者の登録・無効化・権限変更・ログアウト・期限�
  assert.equal((await request('/api/auth/session',{headers:{Cookie:expired}})).status,401);
  assert.equal(await db.auditLog.count({where:{entity_id:user.id}}),3);
  const listing=await (await request('/api/admin/users',{headers:{Cookie:cookie}})).text();assert.ok(!listing.includes('password_hash'));assert.ok(!listing.includes('scrypt$'));
+});
+
+test('パスワード欄と登録・変更APIが8〜128文字を受け付ける', async () => {
+ const cookie = await login('HTTP-ADMIN');
+ const html = await (await request('/admin/users', { headers: { Cookie: cookie } })).text();
+ const inputs = [...html.matchAll(/<input\b[^>]*name="password"[^>]*>/g)].map(match => match[0]);
+ assert.ok(inputs.length > 0); assert.ok(html.includes('8〜128文字'));
+ for (const input of inputs) { assert.match(input, /minlength="8"/i); assert.match(input, /maxlength="128"/i); }
+ for (const length of [7, 129]) assert.equal((await post('/api/admin/users', cookie, { employee_code: 'HTTP-BAD-LENGTH-' + length, name: '境界値', role: 'WORKER', password: 'x'.repeat(length) })).status, 400);
+ const created = await post('/api/admin/users', cookie, { employee_code: 'HTTP-EIGHT', name: '8文字利用者', role: 'WORKER', password: 'Abcd1234' }); assert.equal(created.status, 201);
+ const { user } = await created.json();
+ const first = await login('HTTP-EIGHT', 'Abcd1234');
+ assert.equal((await post('/api/admin/users/' + user.id, cookie, { name: user.name, role: 'WORKER', active: true, password: 'Zyxw9876' })).status, 200);
+ assert.equal((await request('/api/auth/session', { headers: { Cookie: first } })).status, 401);
+ const current = await login('HTTP-EIGHT', 'Zyxw9876');
+ assert.equal((await post('/api/admin/users/' + user.id, cookie, { name: user.name, role: 'WORKER', active: true, password: '' })).status, 200);
+ assert.equal((await request('/api/auth/session', { headers: { Cookie: current } })).status, 200);
 });
 
 test('HTMLフォームのログイン・登録・更新・ログアウトが303で遷移する',async()=>{

@@ -1,6 +1,7 @@
 import type { PrismaClient, Prisma } from '../../generated/prisma/client';
 import { hashPassword, verifyPassword, createToken, tokenHash } from './crypto';
 import { can, type Role, roleLabels } from './permissions';
+import { MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH, PASSWORD_LENGTH_ERROR } from './password-policy';
 export class AuthError extends Error { constructor(public status:number,message:string) {super(message);} }
 const denied=()=>new AuthError(401,'社員IDまたはパスワードを確認してください');
 const unauthorized=()=>new AuthError(401,'ログインしてください');
@@ -11,7 +12,7 @@ export const IDLE_MS=30*60_000, MAX_MS=8*60*60_000;
 export class AuthService {
  constructor(private db:PrismaClient, private clock:()=>Date=()=>new Date()) {}
  async login(code:string,password:string) {
-  if(typeof code!=='string'||typeof password!=='string'||code.length>32||password.length>128||!code.trim()||!password) throw denied();
+  if(typeof code!=='string'||typeof password!=='string'||code.length>32||password.length>MAX_PASSWORD_LENGTH||!code.trim()||!password) throw denied();
   const employee_code=code.trim().toUpperCase(), now=this.clock();
   const result=await this.db.$transaction(async tx=>{
    const key=tokenHash(employee_code);
@@ -21,7 +22,7 @@ export class AuthService {
    await tx.$queryRaw`SELECT id FROM users WHERE employee_code=${employee_code} FOR UPDATE`;
    const user=await tx.user.findUnique({where:{employee_code}});
    const valid=await verifyPassword(password,user?.password_hash??null);
-   if(!user||!user.active||!valid) return {error:denied()};
+   if(!user||!user.active||user.deleted_at||!valid) return {error:denied()};
    const token=createToken();
    await tx.session.create({data:{token_hash:tokenHash(token),user_id:user.id,created_at:now,last_seen_at:now,expires_at:new Date(now.getTime()+MAX_MS)}});
    await tx.loginAttempt.delete({where:{key}});
@@ -34,9 +35,9 @@ export class AuthService {
  private async authenticated(client:Client,token:string|undefined) {
   if(!token||!/^[A-Za-z0-9_-]{43}$/.test(token)) throw unauthorized();
   const hash=tokenHash(token), now=this.clock();
-  const session=await client.session.findUnique({where:{token_hash:hash},include:{user_record:{select:selectUser}}});
+  const session=await client.session.findUnique({where:{token_hash:hash,user_record:{deleted_at:null}},include:{user_record:{select:selectUser}}});
   if(!session||!session.user_record.active||session.expires_at<=now||now.getTime()-session.last_seen_at.getTime()>=IDLE_MS) throw unauthorized();
-  const touched=await client.session.updateMany({where:{token_hash:hash,expires_at:{gt:now},last_seen_at:{gt:new Date(now.getTime()-IDLE_MS)},user_record:{active:true}},data:{last_seen_at:now}});
+  const touched=await client.session.updateMany({where:{token_hash:hash,expires_at:{gt:now},last_seen_at:{gt:new Date(now.getTime()-IDLE_MS)},user_record:{active:true,deleted_at:null}},data:{last_seen_at:now}});
   if(!touched.count) throw unauthorized();
   return session.user_record;
  }
@@ -55,13 +56,13 @@ export class AuthService {
  }
  async listUsers(token:string|undefined) {
   await this.authenticate(token,'users:manage');
-  return this.db.user.findMany({select:selectUser,orderBy:{employee_code:'asc'}});
+  return this.db.user.findMany({where:{deleted_at:null},select:selectUser,orderBy:{employee_code:'asc'}});
  }
  private validate(input:{name:unknown;role:unknown;active?:unknown;employee_code?:unknown;password?:unknown},creating:boolean) {
   if(typeof input.name!=='string'||!input.name.trim()||input.name.trim().length>80||typeof input.role!=='string'||!Object.hasOwn(roleLabels,input.role)) throw new AuthError(400,'氏名とロールを確認してください');
   if(!creating&&typeof input.active!=='boolean') throw new AuthError(400,'有効状態を選択してください');
   if(creating&&(typeof input.employee_code!=='string'||!/^[A-Z0-9_-]{1,32}$/.test(input.employee_code))) throw new AuthError(400,'社員IDは半角英大文字・数字・ハイフン・アンダースコア32文字以内です');
-  if((creating||input.password)&& (typeof input.password!=='string'||input.password.length<12||input.password.length>128)) throw new AuthError(400,'パスワードは12〜128文字で設定してください');
+  if((creating||input.password)&& (typeof input.password!=='string'||input.password.length<MIN_PASSWORD_LENGTH||input.password.length>MAX_PASSWORD_LENGTH)) throw new AuthError(400,PASSWORD_LENGTH_ERROR);
  }
  async authorized<T>(token:string|undefined,required:readonly string[],operation:(tx:Client,actor:Viewer)=>Promise<T>) {
   return this.db.$transaction(async tx=>{
@@ -98,7 +99,7 @@ export class AuthService {
   if(!/^[0-9a-f-]{36}$/i.test(id)) throw new AuthError(400,'ユーザーIDが不正です');
   const password_hash=input.password?await hashPassword(input.password):undefined;
   return this.asAdmin(token,async(tx,actor)=>{
-   const before=await tx.user.findUnique({where:{id},select:selectUser});
+   const before=await tx.user.findFirst({where:{id,deleted_at:null},select:selectUser});
    if(!before) throw new AuthError(404,'ユーザーが見つかりません');
    if(id===actor.id&&(!input.active||input.role!=='ADMIN')) throw new AuthError(409,'自分自身を無効化・降格することはできません');
    if(before.active&&before.role==='ADMIN'&&(!input.active||input.role!=='ADMIN')&&await tx.user.count({where:{active:true,role:'ADMIN'}})<=1) throw new AuthError(409,'有効な管理者を1人以上残してください');

@@ -14,8 +14,8 @@ after(async()=>{await f?.close();});
 async function stock(on_hand=10,reserved=0){
  const n=++seq;
  const tool=await masters.createTool(token(),{tool_code:'INV-'+n,name:'架空ドリル'+n,category:'DRILL',unit:'本'});
- const location=await masters.createMaster(token(),'locations',{location_code:'SHELF-'+n,name:'架空棚'});
- const machine=await f.db.machine.create({data:{machine_code:'MC-'+n,name:'legacy equipment'}});
+ const location=await f.db.location.create({data:{location_code:'SHELF-'+n,name:'架空棚'}});
+ const machine={id:randomUUID()}; // Identifier retained only in legacy replay fixtures, not in a live table.
  await masters.registerInitialStock(token(),tool.id,{location_id:location.id,quantity:on_hand,request_key:randomUUID()});
  if(reserved)await f.db.stockBalance.update({where:{tool_id_location_id:{tool_id:tool.id,location_id:location.id}},data:{reserved}});
  return {tool,location,machine};
@@ -67,7 +67,7 @@ test('equipment-free issue validates active targets and available stock',async()
  const s=await stock(3,1);
  assert.equal((await service.issue(token('WORKER'),issueInput(s))).machine_id,null);await assert.rejects(service.issue(token('WORKER'),{...issueInput(s),machine_id:s.machine.id}),status(400));
  await assert.rejects(service.issue(token('WORKER'),issueInput(s,3)),status(409));
- const shelf=await masters.createMaster(token(),'locations',{location_code:'EMPTY-'+(++seq),name:'未登録棚'});
+ const shelf=await f.db.location.create({data:{location_code:'EMPTY-'+(++seq),name:'未登録棚'}});
  await assert.rejects(service.issue(token('WORKER'),{...issueInput(s),location_id:shelf.id}),status(409));
  await f.db.location.update({where:{id:s.location.id},data:{active:false}});
  await assert.rejects(service.issue(token('WORKER'),issueInput(s)),status(409));
@@ -88,7 +88,7 @@ test('数量・理由・IDの型と整数範囲を検証する',async()=>{
 
 test('receiving adds stock concurrently and replays once',async()=>{
  const s=await stock(0);
- const shelf=await masters.createMaster(token(),'locations',{location_code:'RECEIVE-'+(++seq),name:'入庫先'});
+ const shelf=await f.db.location.create({data:{location_code:'RECEIVE-'+(++seq),name:'入庫先'}});
  const input={tool_id:s.tool.id,location_id:shelf.id,quantity:3,reason:'架空追加',request_key:randomUUID()};
  const [a]=await Promise.all([service.receive(token('ADMIN'),input),service.receive(token('ADMIN_ALT'),{...input,quantity:4,request_key:randomUUID()})]);
  assert.deepEqual(await service.receive(token(),input),a);
@@ -119,6 +119,19 @@ test('reversal preserves original history and rejects duplicate cancellation',as
  await assert.rejects(service.reverse(token(),{...input,transaction_id:reversed.id,request_key:randomUUID()}),status(409));
 });
 
+test('理由なしで取り消せて空欄での再送も同じ結果になり、在庫と監査を保持する', async () => {
+ const s = await stock(), original = await service.issue(token('WORKER'), issueInput(s, 2));
+ const input = { transaction_id: original.id, request_key: randomUUID() };
+ const reversed = await service.reverse(token(), input);
+ assert.equal(reversed.quantity, 2); assert.equal(reversed.reason, '入出庫履歴から取消');
+ assert.equal((await balance(s)).on_hand, 10);
+ assert.deepEqual(await service.reverse(token(), { ...input, reason: '  ' }), reversed);
+ assert.equal(await f.db.inventoryTransaction.count({ where: { reverses_id: original.id } }), 1);
+ const log = await f.db.auditLog.findFirstOrThrow({ where: { entity_id: reversed.id, action: 'INVENTORY_MUTATION' } });
+ assert.equal((log.details as { request: { reason: unknown } }).request.reason, null);
+ assert.equal((await f.db.inventoryTransaction.findUniqueOrThrow({ where: { id: original.id } })).quantity, -2);
+});
+
 test('同時の二重取消は片方のみ成功し、消費済み入庫や引当割れの取消を拒否',async()=>{
  const s=await stock(),original=await service.issue(token('WORKER'),issueInput(s,2));
  const results=await Promise.allSettled(['ADMIN','ADMIN_ALT'].map(role=>service.reverse(token(role),{transaction_id:original.id,reason:'架空訂正',request_key:randomUUID()})));
@@ -135,7 +148,6 @@ test('inactive targets still allow reversal and successful replay',async()=>{
  const s=await stock(),input=issueInput(s,2),original=await service.issue(token('WORKER'),input);
  await f.db.tool.update({where:{id:s.tool.id},data:{active:false}});
  await f.db.location.update({where:{id:s.location.id},data:{active:false}});
- await f.db.machine.update({where:{id:s.machine.id},data:{active:false}});
  assert.deepEqual(await service.issue(token('WORKER'),input),original);
  const reversed=await service.reverse(token(),{transaction_id:original.id,reason:'無効化後の訂正',request_key:randomUUID()});
  assert.equal(reversed.on_hand_after,10);
@@ -156,7 +168,7 @@ test('own history includes both issue and receive plus their admin reversals',as
 
 test('日本時間の日付境界と実在日・期間・種別・ID・ページを検証する',async()=>{
  const s=await stock(0);
- for(const date of ['2026-11-03T14:59:59.999Z','2026-11-03T15:00:00.000Z','2026-11-04T14:59:59.999Z','2026-11-04T15:00:00.000Z'])await f.db.inventoryTransaction.create({data:{tool_id:s.tool.id,location_id:s.location.id,actor_user_id:f.users.WORKER,machine_id:s.machine.id,type:'ISSUE',quantity:-1,idempotency_key:randomUUID(),created_at:new Date(date)}});
+ for(const date of ['2026-11-03T14:59:59.999Z','2026-11-03T15:00:00.000Z','2026-11-04T14:59:59.999Z','2026-11-04T15:00:00.000Z'])await f.db.inventoryTransaction.create({data:{tool_id:s.tool.id,location_id:s.location.id,actor_user_id:f.users.WORKER,type:'ISSUE',quantity:-1,idempotency_key:randomUUID(),created_at:new Date(date)}});
  assert.equal((await service.listHistory(token('ADMIN'),{tool_id:s.tool.id,from:'2026-11-04',to:'2026-11-04',type:'ISSUE'})).total,2);
  for(const query of [{from:'2026-02-30'},{from:'2026-11-05',to:'2026-11-04'},{type:'INVALID'},{tool_id:'bad'},{page:'1.5'}])await assert.rejects(service.listHistory(token(),query),status(400));
 });
@@ -179,7 +191,7 @@ test('履歴を品目コード・カテゴリー・操作者で絞り込み本�
 
 test('履歴は50件単位で同時刻ならID降順、範囲外ページは空',async()=>{
  const s=await stock(0),prefix='10000000-0000-0000-0000-';
- await f.db.inventoryTransaction.createMany({data:Array.from({length:51},(_,i)=>({id:prefix+String(i+1).padStart(12,'0'),tool_id:s.tool.id,location_id:s.location.id,actor_user_id:f.users.WORKER,machine_id:s.machine.id,type:'ISSUE' as const,quantity:-1,idempotency_key:randomUUID(),created_at:new Date('2026-11-01T00:00:00Z')}))});
+ await f.db.inventoryTransaction.createMany({data:Array.from({length:51},(_,i)=>({id:prefix+String(i+1).padStart(12,'0'),tool_id:s.tool.id,location_id:s.location.id,actor_user_id:f.users.WORKER,type:'ISSUE' as const,quantity:-1,idempotency_key:randomUUID(),created_at:new Date('2026-11-01T00:00:00Z')}))});
  const a=await service.listHistory(token(),{tool_id:s.tool.id,type:'ISSUE'}),b=await service.listHistory(token(),{tool_id:s.tool.id,type:'ISSUE',page:2});
  assert.equal(a.total,51);assert.equal(a.items.length,50);assert.equal(a.items[0].id,prefix+'000000000051');assert.equal(b.items[0].id,prefix+'000000000001');
  assert.equal((await service.listHistory(token(),{tool_id:s.tool.id,page:'999999999999'})).items.length,0);
@@ -235,13 +247,13 @@ test('ordinary receiving requires neither equipment nor reason for either role',
 test('successful legacy equipment request can replay after retirement',async()=>{
  const s=await stock(),input={...issueInput(s,2),machine_id:s.machine.id,reason:'legacy task'};
  const normalized={operation:'issue',request_key:input.request_key,reason:input.reason,tool_id:s.tool.id,location_id:s.location.id,machine_id:s.machine.id,quantity:2};
- const transaction=await f.db.inventoryTransaction.create({data:{tool_id:s.tool.id,location_id:s.location.id,machine_id:s.machine.id,actor_user_id:f.users.WORKER,type:'ISSUE',quantity:-2,reason:input.reason,idempotency_key:'phase4:'+input.request_key}});
+ const transaction=await f.db.inventoryTransaction.create({data:{tool_id:s.tool.id,location_id:s.location.id,actor_user_id:f.users.WORKER,type:'ISSUE',quantity:-2,reason:input.reason,idempotency_key:'phase4:'+input.request_key}});
  await f.db.stockBalance.update({where:{tool_id_location_id:{tool_id:s.tool.id,location_id:s.location.id}},data:{on_hand:8}});
  const result={id:transaction.id,type:'ISSUE',tool_id:s.tool.id,location_id:s.location.id,actor_user_id:f.users.WORKER,machine_id:s.machine.id,quantity:-2,on_hand_before:10,on_hand_after:8,reserved:0,reason:input.reason,reverses_id:null,created_at:transaction.created_at.toISOString()};
  await f.db.auditLog.create({data:{actor_user_id:f.users.WORKER,action:'INVENTORY_MUTATION',entity_type:'inventory_transactions',entity_id:transaction.id,details:{request:normalized,request_fingerprint:JSON.stringify(Object.keys(normalized).sort().map(k=>[k,normalized[k as keyof typeof normalized]])),result}}});
  assert.deepEqual(await service.issue(token('WORKER'),input),result);assert.equal((await balance(s)).on_hand,8);
  const legacyDetail=await service.historyDetail(token(),transaction.id);assert.equal(legacyDetail.on_hand_after,8);assert.equal(legacyDetail.unit_price,null);
- const reversed=await service.reverse(token(),{transaction_id:transaction.id,request_key:randomUUID(),reason:'legacy correction'});assert.equal(reversed.machine_id,s.machine.id);
+ const reversed=await service.reverse(token(),{transaction_id:transaction.id,request_key:randomUUID(),reason:'legacy correction'});assert.equal(reversed.machine_id,null);
 });
 
 

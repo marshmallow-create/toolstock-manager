@@ -1,4 +1,4 @@
-# DB設計（2026年11月8日）
+# DB設計
 
 構造の正本は `prisma/schema.prisma` と `prisma/migrations/` です。画面仕様は[現行仕様書](specification.md)を参照してください。
 
@@ -18,18 +18,20 @@
 
 | テーブル | 用途 |
 | --- | --- |
-| users | 社員ID、氏名、2ロール、有効状態、パスワードハッシュ |
+| users | 社員ID、氏名、2ロール、有効状態、削除日時、パスワードハッシュ |
 | sessions | 生トークンではなくSHA-256、ユーザー、作成・最終利用・絶対期限 |
 | login_attempts | 社員IDハッシュごとの試行回数と15分の窓 |
-| tools | 品目コード・名称・カテゴリー・単位・メーカー・型番・単価・部門・棚番・状態 |
+| tools | 品目コード・名称・カテゴリー・単位・単価・部門・棚番・状態 |
 | locations | 旧在庫の参照先と工具ごとの内部在庫参照先。独立した管理画面はなし |
 | stock_balances | 工具×参照先ごとの実在庫・引当 |
 | inventory_policies | 工具全体の安全在庫・発注点・目標在庫 |
 | inventory_transactions | 増減数量、操作種別、操作者、取消元、理由、確定残高・単価 |
 | reorder_candidates | 発注候補数とOPEN / CONVERTED / DISMISSED状態 |
 | audit_logs | 操作者、操作名、対象、変更前後などのJSON |
-| machines / suppliers / supplier_items | 旧データと参照整合性の保持。旧単価の読み取り互換 |
+| suppliers | 発注データの仕入先と参照整合性の保持 |
 | purchase_orders / purchase_order_items | 発注残集計に使用する既存構造。注文ワークフローの画面は未実装 |
+
+業務・認証・監査の全13テーブルを保持します。廃止済みの `machines` / `supplier_items` と `tools.manufacturer` / `tools.model` / `inventory_transactions.machine_id` は監査へ退避して削除済みです。`tools.unit` は既存の数量・履歴の意味を維持する内部項目として保持します。
 
 新規工具には `@tool/<工具UUID>` の内部参照先を作成します。利用者の棚番は `tools.shelf_code` に保持し、棚番を変更しても在庫行・取引の参照先は変えません。
 
@@ -52,6 +54,7 @@
 | TOOL_STOCK_UPDATED | 工具編集での在庫修正、変更前後と取引 |
 | TOOL_ORDER_QUANTITY_UPDATED | 発注候補数の変更前後 |
 | INVENTORY_MUTATION | 通常取引の要求フィンガープリントと確定結果 |
+| LEGACY_SCHEMA_ARCHIVED | 削除前の旧設備・仕入条件・メーカー・型番・取引の設備参照 |
 
 工具変更履歴はこのうち工具変更に関するイベントから差分を生成します。監査表や取引表を表示件数に合わせて削除することはありません。
 
@@ -66,8 +69,18 @@
 | 20261107000000_simple_inventory | 出庫の設備必須制約を解除 |
 | 20261107010000_tool_shelf | 工具ごとの棚番 |
 | 20261107020000_history_snapshots | 取引直後の残高・単価と索引 |
+| 20261110000000_remove_unused_legacy | 旧項目の監査退避、単価移行、未使用2テーブル・3カラムの削除 |
+| 20261110150000_user_soft_delete | users.deleted_atを追加。物理削除せず履歴との関連を保持 |
 
 既存の移行を書き換えず、変更は追加移行で管理します。PrismaスキーマだけからDBを作り直すとSQL専用のCHECK・部分索引・トリガーが欠けるため、既存移行を適用します。
+
+## 旧構造とユーザーの保持方針
+
+旧構造の削除は単一トランザクションで、旧設備・購買条件・メーカー・型番・取引の設備参照を `LEGACY_SCHEMA_ARCHIVED` へ退避します。退避対象があるのに操作者となる既存ユーザーがいない場合は移行を拒否します。工具の単価が未設定の場合だけ、有効な仕入先の優先購買条件の単価を工具へ移します。保存済み単価は0円を含めて変更しません。
+
+工具・在庫・ユーザー・認証・発注・過去取引の数量・日時・単価・確定残高・既存監査は保持します。古い設備付き要求の成功済み再送は、監査内のフィンガープリントと確定結果を使って互換性を維持します。新しい設備指定は拒否します。
+
+ユーザーの `deleted_at` が設定されている場合は、通常の一覧・検索・変更・認証の対象から除外します。過去の取引・監査の外部キーを保持するため、ユーザーを物理削除しません。削除日時追加のDDL自体は既存ユーザーの状態を変更しません。
 
 ## 開発・テストデータ
 
@@ -75,4 +88,19 @@
 
 資格情報の初期設定はローカルの `toolstock_dev` と明示的な `ALLOW_LOCAL_SEED=yes` に制限します。パスワードはscrypt、16バイトsaltでハッシュ化します。元のパスワードをDB・監査・文書へ保存しません。
 
-Dockerの `postgres_data` ボリュームを保持します。バックアップはDB全体のダンプを別途取得する必要があります。`.local/development-snapshots/` に保管する古い検証用JSONは一部項目の記録であり、DB全体の復元用バックアップではありません。
+Dockerの `postgres_data` ボリュームを保持します。`npm run db:backup` はローカル `toolstock_dev` の全体ダンプを `backups/` へ保存し、`pg_restore --list` とSHA-256で検証します。バックアップはコミットしません。`.local/development-snapshots/` に保管する古い検証用JSONは一部項目の記録であり、DB全体の復元用バックアップではありません。
+
+## バックアップと復元
+
+データを削除する移行の前に `npm.cmd run db:backup` を実行し、ダンプと検証情報を保持します。`npm.cmd run test:cleanup-migration` は旧構造からの退避・単価移行・履歴保持・削除後の構造・空DB適用・失敗時ロールバックとバックアップ接続先の制限を検証します。
+
+復元はアプリを停止して、バックアップ時点と同じコード・生成クライアントと組み合わせます。まず新しい検証専用DBへ復元し、工具件数、在庫残高、取引・監査を照合します。現在のDBへ無条件で上書きしません。次は既存のダンプを検証専用DBへ復元する例です。DB名とダンプのパスは実際の対象に合わせます。
+
+```powershell
+docker compose exec db createdb -U toolstock toolstock_restore_test
+docker compose cp backups/toolstock.dump db:/tmp/restore.dump
+docker compose exec db pg_restore -U toolstock -d toolstock_restore_test --no-owner --exit-on-error /tmp/restore.dump
+docker compose exec db psql -U toolstock -d toolstock_restore_test -c 'SELECT count(*) FROM tools;'
+```
+
+この復元例は今回の整理では実行していません。バックアップファイルの検証と、DBを実際に復元して業務データを照合する検証は別です。

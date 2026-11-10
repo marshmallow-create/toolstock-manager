@@ -4,6 +4,7 @@ import { Messages, inputClass, buttonClass, panelClass, queryText, type Search }
 import { cookies } from 'next/headers';
 import { auth,COOKIE,pageUser } from '@/lib/auth/server';
 import { roleLabels } from '@/lib/auth/permissions';
+import { MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH, PASSWORD_LENGTH_LABEL } from '@/lib/auth/password-policy';
 function Roles(){return Object.entries(roleLabels).map(([role,label])=><option key={role} value={role}>{label}</option>);}
 export default async function Users({searchParams}:{searchParams:Promise<Search>}) {
  const actor=await pageUser('users:manage');
@@ -24,7 +25,7 @@ export default async function Users({searchParams}:{searchParams:Promise<Search>
     <label className="grid gap-1">社員ID<input name="employee_code" required pattern="[A-Z0-9_-]+" maxLength={32} className={inputClass} /></label>
     <label className="grid gap-1">氏名<input name="name" required maxLength={80} className={inputClass} /></label>
     <label className="grid gap-1">ロール<select name="role" className={inputClass}><Roles /></select></label>
-    <label className="grid gap-1">初期パスワード（12〜128文字）<input name="password" type="password" required minLength={12} maxLength={128} autoComplete="new-password" className={inputClass} /></label>
+    <label className="grid gap-1">初期パスワード（{PASSWORD_LENGTH_LABEL}）<input name="password" type="password" required minLength={MIN_PASSWORD_LENGTH} maxLength={MAX_PASSWORD_LENGTH} autoComplete="new-password" className={inputClass} /></label>
     <button className={buttonClass + ' sm:col-span-2'}>登録する</button>
    </form>
   </section>
@@ -50,7 +51,7 @@ export default async function Users({searchParams}:{searchParams:Promise<Search>
     <label className="grid gap-1">氏名<input name="name" required maxLength={80} defaultValue={user.name} className={inputClass} /></label>
     <label className="grid gap-1">ロール<select name="role" defaultValue={user.role} className={inputClass}><Roles /></select></label>
     <label className="grid gap-1">状態<select name="active" defaultValue={String(user.active)} className={inputClass}><option value="true">有効</option><option value="false">無効</option></select></label>
-    <label className="grid gap-1">新しいパスワード（変更する場合のみ）<input name="password" type="password" minLength={12} maxLength={128} autoComplete="new-password" className={inputClass} /></label>
+    <label className="grid gap-1">新しいパスワード（変更する場合のみ）<input name="password" type="password" minLength={MIN_PASSWORD_LENGTH} maxLength={MAX_PASSWORD_LENGTH} autoComplete="new-password" className={inputClass} /></label>
     <button className={buttonClass + ' sm:col-span-2'}>保存する</button>
    </form>
     </details>

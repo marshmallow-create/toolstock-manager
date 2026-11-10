@@ -61,7 +61,7 @@ test('snapshot migration preserves old history and its append-only constraints',
  try{
   await client.query('CREATE SCHEMA '+schema);await client.query('SET search_path TO '+schema);
   const migration='20261107020000_history_snapshots';
-  for(const name of (await readdir('prisma/migrations')).filter(n=>/^\d/.test(n)&&n!==migration).sort())await client.query(await readFile('prisma/migrations/'+name+'/migration.sql','utf8'));
+ for(const name of (await readdir('prisma/migrations')).filter(n=>/^\d/.test(n)&&n<migration).sort())await client.query(await readFile('prisma/migrations/'+name+'/migration.sql','utf8'));
   const tool=randomUUID(),location=randomUUID(),user=randomUUID(),id=randomUUID();
   await client.query("INSERT INTO tools(id,tool_code,name,category,manufacturer,model,unit,updated_at) VALUES ($1,'SNAPSHOT','legacy','DRILL','','','pcs',now())",[tool]);
   await client.query("INSERT INTO locations(id,location_code,name,updated_at) VALUES ($1,'SNAPSHOT','legacy',now())",[location]);

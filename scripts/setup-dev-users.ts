@@ -16,7 +16,7 @@ try {
   const actor=await tx.user.findUniqueOrThrow({where:{employee_code:'ADMIN001'}});
   for(const employee_code of ['A001','ADMIN001']){
    const user=await tx.user.findUniqueOrThrow({where:{employee_code}});
-   if(user.password_hash) continue;
+   if(!user.active||user.deleted_at||user.password_hash) continue;
    const password=randomBytes(24).toString('base64url');
    await tx.user.update({where:{id:user.id},data:{password_hash:await hashPassword(password)}});
    await tx.auditLog.create({data:{actor_user_id:actor.id,action:'DEV_PASSWORD_INITIALIZED',entity_type:'users',entity_id:user.id,details:{employee_code}}});

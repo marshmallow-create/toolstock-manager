@@ -1,6 +1,5 @@
 import type { PrismaClient, TransactionType } from '../../generated/prisma/client';
 import { AuthService, AuthError } from '../auth/service';
-import { recordedUnitPrice } from './snapshot';
 import { audit } from '../masters/write';
 import { mutationInput, fingerprint } from './validation';
 import { operationPermissions, type Operation, type Input, type InventoryResult } from './types';
@@ -33,7 +32,6 @@ export async function mutateInventory(db:PrismaClient,auth:AuthService,token:str
    await tx.$queryRaw`SELECT id FROM tools WHERE id=${toolId}::uuid FOR UPDATE`;
    const tool=await tx.tool.findUnique({where:{id:toolId}}),location=await tx.location.findUnique({where:{id:locationId}});
    if(!tool||!location)throw new AuthError(404,'工具・保管場所が見つかりません');
-   const machineId:string|null=original?.machine_id??null;
    if(operation!=='reverse'){
     if(!tool.active||!location.active)throw new AuthError(409,'有効な工具・保管場所を選択してください');
    }else{
@@ -54,9 +52,9 @@ export async function mutateInventory(db:PrismaClient,auth:AuthService,token:str
     const updated=await tx.stockBalance.updateMany({where:{id:stock.id,on_hand:before,reserved},data:{on_hand:after}});
     if(updated.count!==1)throw new AuthError(409,'在庫が変わりました。再確認してください');
    }else await tx.stockBalance.create({data:{tool_id:toolId,location_id:locationId,on_hand:after,reserved:0}});
-   const unitPrice=original?original.unit_price:await recordedUnitPrice(tx,tool);
-   const transaction=await tx.inventoryTransaction.create({data:{tool_id:toolId,location_id:locationId,actor_user_id:actor.id,machine_id:machineId,type,quantity:delta,idempotency_key:key,reverses_id:original?.id??null,reason:request.reason,on_hand_after:after,unit_price:unitPrice}});
-   const result:InventoryResult={id:transaction.id,type,tool_id:toolId,location_id:locationId,actor_user_id:actor.id,machine_id:machineId,quantity:delta,on_hand_before:before,on_hand_after:after,reserved,reason:transaction.reason,reverses_id:transaction.reverses_id,created_at:transaction.created_at.toISOString()};
+   const unitPrice=original?original.unit_price:tool.unit_price;
+   const transaction=await tx.inventoryTransaction.create({data:{tool_id:toolId,location_id:locationId,actor_user_id:actor.id,type,quantity:delta,idempotency_key:key,reverses_id:original?.id??null,reason:operation==='reverse'?(request.reason??'入出庫履歴から取消'):request.reason,on_hand_after:after,unit_price:unitPrice}});
+   const result:InventoryResult={id:transaction.id,type,tool_id:toolId,location_id:locationId,actor_user_id:actor.id,machine_id:null,quantity:delta,on_hand_before:before,on_hand_after:after,reserved,reason:transaction.reason,reverses_id:transaction.reverses_id,created_at:transaction.created_at.toISOString()};
    await audit(tx,actor.id,'INVENTORY_MUTATION','inventory_transactions',transaction.id,{request,request_fingerprint:signature,result});
    return result;
   });

@@ -48,6 +48,7 @@ export default async function ToolDetail({ params, searchParams }: { params: Pro
    </table></div> : <p className="text-slate-500">工具の変更履歴はありません。</p>}
   </section>
   <section className="mb-3"><h2 className="mb-3 text-xl font-bold">直近の履歴（最大5件）</h2><HistoryTable items={recent} /></section>
+  <nav aria-label="入出庫履歴" className="mt-3 text-sm"><Link href="/history" className="underline">入出庫履歴へ</Link></nav>
 
  </WorkspaceShell>;
 }

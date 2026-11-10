@@ -7,7 +7,7 @@ export type Normalized = {
  transaction_id?:string;
 };
 export function mutationInput(operation:Operation,input:Input):Normalized {
- const request_key=uuid(input.request_key), reason=text(input.reason,'理由',500,operation!=='reverse')||null;
+ const request_key=uuid(input.request_key), reason=text(input.reason,'理由',500,true)||null;
  if(operation==='reverse')return {operation,request_key,reason,transaction_id:uuid(input.transaction_id)};
  const common={operation,request_key,reason,tool_id:uuid(input.tool_id),location_id:uuid(input.location_id)};
  if(operation==='receive'&&['order_id','order_item_id','purchase_order_id','purchase_order_item_id'].some(field=>Object.hasOwn(input,field)))throw new AuthError(400,'発注書にひも付く入荷は未対応です。入庫を利用してください');
@@ -18,6 +18,15 @@ export function fingerprint(input:Normalized) {
 }
 export function optionalId(value:unknown) {
  return value===undefined||value===''?undefined:uuid(value);
+}
+export function historyReturnPath(value: unknown): string | undefined {
+ if (value === undefined || value === '') return undefined;
+ if (typeof value !== 'string' || value.length > 4096 || !value.startsWith('/') || value.startsWith('//')) throw new AuthError(400, '移動先を確認してください');
+ let target: URL;
+ try { target = new URL(value, 'http://toolstock.invalid'); } catch { throw new AuthError(400, '移動先を確認してください'); }
+ if (target.origin !== 'http://toolstock.invalid' || target.pathname !== '/history') throw new AuthError(400, '移動先を確認してください');
+ target.searchParams.delete('error'); target.searchParams.delete('saved');
+ return target.pathname + target.search + target.hash;
 }
 export function calendarDate(value:unknown):Date|undefined {
  if(value===undefined||value==='')return undefined;

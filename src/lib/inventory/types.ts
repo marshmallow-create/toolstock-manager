@@ -14,9 +14,6 @@ export type HistoryItem = {
  location:{id:string;location_code:string;name:string;active:boolean};
  actor:{id:string;employee_code:string;name:string;active:boolean};
 };
-export const transactionLabels:Record<TransactionType,string> = {
- ISSUE:'出庫', RECEIVE:'入庫', ADJUSTMENT:'在庫調整（旧履歴）', REVERSAL:'逆取引', RETURN:'返品',
-};
 export const operationPermissions:Record<Operation,readonly string[]> = {
  issue:['inventory:issue'], receive:['inventory:receive'],
  reverse:['inventory:reverse'],

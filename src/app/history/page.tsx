@@ -11,7 +11,7 @@ import { CategoryField } from '@/components/tool-option-fields';
 const inputClass = 'w-full rounded border border-slate-300 bg-white px-3 py-1.5 text-sm';
 export default async function History({ searchParams }: { searchParams: Promise<Search> }) {
  const actor = await pageUser('history:own'), search = await searchParams, token = await pageToken(), service = inventory();
- const options = await service.historyOptions(token), priceVisible = can(actor.role, 'masters:write') || can(actor.role, 'orders:read');
+ const options = await service.historyOptions(token), priceVisible = can(actor.role, 'masters:write');
  let result: Awaited<ReturnType<typeof service.listHistory>> = { items: [], total: 0, page: 1, pageSize: 50 }, error = '';
  try { result = await service.listHistory(token, search); } catch (e) { if (e instanceof AuthError && [400, 403].includes(e.status)) error = e.message; else throw e; }
  const pageLink = (page: number) => { const q = new URLSearchParams(); for (const key of ['from', 'to', 'tool_id', 'tool_code', 'category', 'actor_user_id', 'type', 'movement', 'unit_price_min', 'unit_price_max']) if (queryText(search[key])) q.set(key, queryText(search[key])); q.set('page', String(page)); return '/history?' + q; };
@@ -31,7 +31,7 @@ export default async function History({ searchParams }: { searchParams: Promise<
    </>}
    <div className="flex items-end gap-4"><button className="ui-button">検索する</button><Link href="/history" className="py-2 text-sm underline">条件をクリア</Link></div>
   </form>
-  <p className="mb-2 text-right text-sm">{result.total}件 / {result.page}ページ（1ページ50件）</p><HistoryTable items={result.items} canReverse={can(actor.role, 'inventory:reverse')} />
+  <p className="mb-2 text-right text-sm">{result.total}件 / {result.page}ページ（1ページ50件）</p><HistoryTable items={result.items} canReverse={can(actor.role, 'inventory:reverse')} returnTo={pageLink(result.page)} />
   <nav aria-label="履歴のページ切り替え" className="mt-3 flex gap-4 text-sm">{result.page > 1 && <Link href={pageLink(result.page - 1)} className="underline">前のページ</Link>}{result.page * result.pageSize < result.total && <Link href={pageLink(result.page + 1)} className="underline">次のページ</Link>}{result.page > 1 && !result.items.length && <Link href={pageLink(1)} className="underline">先頭ページへ</Link>}</nav>
  </section></WorkspaceShell>;
 }

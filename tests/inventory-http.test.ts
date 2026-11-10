@@ -17,7 +17,7 @@ before(async () => {
  fixture = await databaseFixture('inventory_http');
  const service = new MastersService(fixture.db), token = fixture.tokens.ADMIN;
  toolId = (await service.createTool(token, { tool_code: 'INV-HTTP', name: '履歴検証工具', category: 'DRILL', manufacturer: '', model: '', unit: '本', safety_stock: 0, reorder_point: 0, target_stock: 0 })).id;
- locationId = (await service.createMaster(token, 'locations', { location_code: 'INV-SHELF', name: '履歴検証棚' })).id;
+ locationId = (await fixture.db.location.create({data:{location_code:'INV-SHELF',name:'履歴検証棚'}})).id;
  await service.registerInitialStock(token, toolId, { location_id: locationId, quantity: 100, request_key: randomUUID() });
  const probe = createServer(); await new Promise<void>(resolve => probe.listen(0, '127.0.0.1', resolve));
  const port = (probe.address() as { port: number }).port; await new Promise<void>(resolve => probe.close(() => resolve())); origin = 'http://127.0.0.1:' + port;
@@ -98,13 +98,38 @@ test('HTML入出庫は工具詳細へ戻り、取消は履歴一覧から実行�
  const detail = await request(target.pathname + target.search, 'WORKER'); assert.equal(detail.status, 200); assert.ok((await detail.text()).includes('id="inventory-issue"'));
  const list = await request('/history?tool_id=' + toolId, 'ADMIN'); const html = await list.text();
  assert.ok(html.includes('action="/api/inventory/reverse"')); assert.ok(html.includes('value="' + id + '"'));
+ assert.doesNotMatch(html, /<(?:input|textarea)\b[^>]*name="reason"/);
  for (const role of [undefined, 'WORKER', 'ADMIN']) assert.equal((await request('/history/' + id, role)).status, 404);
  assert.equal(/href="\/history\//.test(html), false);
  const worker = await request('/history?tool_id=' + toolId, 'WORKER'); assert.ok(!(await worker.text()).includes('action="/api/inventory/reverse"'));
- const reversed = await form('/api/inventory/reverse', 'ADMIN', { request_key: randomUUID(), transaction_id: id, reason: 'フォーム取消' }); assert.equal(reversed.status, 303); assert.equal(new URL(reversed.headers.get('location')!).pathname, '/history');
+ const reversed = await form('/api/inventory/reverse', 'ADMIN', { request_key: randomUUID(), transaction_id: id }); assert.equal(reversed.status, 303); assert.equal(new URL(reversed.headers.get('location')!).pathname, '/history');
  const received = await form('/api/inventory/receive', 'WORKER', { request_key: randomUUID(), tool_id: toolId, location_id: locationId, quantity: '2', reason: 'フォーム補充' }); assert.equal(received.status, 303); assert.equal(new URL(received.headers.get('location')!).pathname, '/tools/' + toolId);
  const invalid = await form('/api/inventory/issue', 'WORKER', { request_key: randomUUID(), tool_id: toolId, location_id: locationId, quantity: '0' }); assert.equal(invalid.status, 303);
  const error = new URL(invalid.headers.get('location')!); assert.equal(error.pathname, '/tools/' + toolId); assert.equal(error.searchParams.get('operation'), 'issue'); assert.ok(error.searchParams.get('error'));
+});
+
+test('取消理由を入力せず、検索条件とページ番号を維持し不正な移動先は保存前に拒否する', async () => {
+ const service = new MastersService(fixture.db);
+ const tool = await service.createTool(fixture.tokens.ADMIN, { tool_code: 'SAME-PAGE', name: 'ページ維持用', category: 'DRILL', on_hand: 100 });
+ const stock = await fixture.db.stockBalance.findFirstOrThrow({ where: { tool_id: tool.id } });
+ const rows = Array.from({ length: 51 }, (_, index) => ({ id: randomUUID(), tool_id: tool.id, location_id: stock.location_id, actor_user_id: fixture.users.ADMIN, type: 'ISSUE' as const, quantity: -1, on_hand_after: 99 - index, idempotency_key: 'page-test:' + randomUUID(), created_at: new Date(Date.now() + index * 1000) }));
+ await fixture.db.inventoryTransaction.createMany({ data: rows });
+ await fixture.db.stockBalance.update({ where: { id: stock.id }, data: { on_hand: 49 } });
+ const query = new URLSearchParams({ tool_code: 'SAME-PAGE', category: 'DRILL', movement: 'ISSUE', actor_user_id: fixture.users.ADMIN, page: '2' });
+ const returnTo = '/history?' + query;
+ const listing = await request(returnTo, 'ADMIN'); assert.equal(listing.status, 200);
+ const html = await listing.text(); assert.ok(html.includes('name="return_to"')); assert.ok(html.includes('page=2')); assert.doesNotMatch(html, /name="reason"/);
+ for (const target of ['https://evil.invalid/history', '//evil.invalid/history', '/dashboard', 'javascript:alert(1)', '/\\[']) {
+  const denied = await post('/api/inventory/reverse', 'ADMIN', { transaction_id: rows[0].id, request_key: randomUUID(), return_to: target });
+  assert.equal(denied.status, 400);
+ }
+ assert.equal(await fixture.db.inventoryTransaction.count({ where: { reverses_id: rows[0].id } }), 0);
+ const cancelled = await form('/api/inventory/reverse', 'ADMIN', { transaction_id: rows[0].id, request_key: randomUUID(), return_to: returnTo });
+ assert.equal(cancelled.status, 303);
+ const target = new URL(cancelled.headers.get('location')!); assert.equal(target.pathname, '/history');
+ for (const [key, value] of query) assert.equal(target.searchParams.get(key), value);
+ assert.equal(target.searchParams.get('saved'), '1');
+ assert.equal((await fixture.db.stockBalance.findUniqueOrThrow({ where: { id: stock.id } })).on_hand, 50);
 });
 
 test('空の履歴検索条件を許可し、失効したセッションは在庫を変更できない', async () => {

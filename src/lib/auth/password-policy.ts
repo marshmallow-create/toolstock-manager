@@ -1,0 +1,4 @@
+export const MIN_PASSWORD_LENGTH = 8;
+export const MAX_PASSWORD_LENGTH = 128;
+export const PASSWORD_LENGTH_LABEL = `${MIN_PASSWORD_LENGTH}〜${MAX_PASSWORD_LENGTH}文字`;
+export const PASSWORD_LENGTH_ERROR = `パスワードは${PASSWORD_LENGTH_LABEL}で設定してください`;

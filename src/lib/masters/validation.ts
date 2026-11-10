@@ -1,13 +1,6 @@
 import { AuthError } from '../auth/service';
 import { categoryCode, toolDepartments } from '../tool-options';
 export type Input = Record<string, unknown>;
-export type Kind = 'locations';
-export const codeFields = { locations: 'location_code' } as const;
-export function kind(value: string): Kind {
- if (value === 'machines' || value === 'suppliers') throw new AuthError(404, '対象が見つかりません');
- if (!Object.hasOwn(codeFields, value)) throw new AuthError(400, 'マスタの種類が不正です');
- return value as Kind;
-}
 export function text(value: unknown, label: string, max: number, optional = false) {
  if (optional && (value === undefined || value === null)) return '';
  if (typeof value !== 'string' || value.trim().length > max || (!optional && !value.trim())) throw new AuthError(400, label + 'を確認してください');
@@ -37,7 +30,7 @@ export function unchangedCode(input: Input, field: string, before: string) {
  if (input[field] !== undefined && code(input[field]) !== before) throw new AuthError(400, '登録済みコードは変更できません');
 }
 export function toolData(input: Input, creating: boolean, existingShelf = '') {
- return { name: text(input.name, '品目名', 100), category: categoryValue(input.category), manufacturer: text(input.manufacturer, 'メーカー', 100, true), model: text(input.model, '型番', 100, true), unit: text(creating ? input.unit ?? '個' : input.unit, '単位', 16), active: creating && input.active === undefined ? true : boolean(input.active),
+ return { name: text(input.name, '品目名', 100), category: categoryValue(input.category), unit: text(creating ? input.unit ?? '個' : input.unit, '単位', 16), active: creating && input.active === undefined ? true : boolean(input.active),
   ...(creating || input.department !== undefined ? { department: departmentValue(input.department) } : {}),
   ...(creating || input.shelf_code !== undefined ? { shelf_code: text(input.shelf_code, '棚番', Math.max(100, existingShelf.length), true) } : {}),
   ...(input.unit_price !== undefined ? { unit_price: price(input.unit_price) } : {}),
@@ -66,7 +59,4 @@ export function policyData(input: Input, creating: boolean) {
  const [safety_stock, reorder_point, target_stock] = fields.map(key => empty ? 0 : integer(values[key], '在庫方針'));
  if (safety_stock > reorder_point || reorder_point > target_stock) throw new AuthError(400, '安全在庫≦発注点≦目標在庫で設定してください');
  return { safety_stock, reorder_point, target_stock };
-}
-export function masterData(input: Input, creating: boolean) {
- return { name: text(input.name, '名称', 100), active: creating && input.active === undefined ? true : boolean(input.active) };
 }

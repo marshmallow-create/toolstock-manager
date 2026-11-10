@@ -36,6 +36,18 @@ after(async () => { await db?.$disconnect(); if(admin){ await admin.query('DROP 
 
 const status = (code:number) => (e:unknown) => e instanceof AuthError && e.status===code;
 
+test('削除済みユーザーを一覧から除外し、無効ユーザーは表示を維持する', async () => {
+ const token=(await service.login(codes[1],password)).token;
+ const deleted=await db.user.create({data:{employee_code:'DELETED-USER',name:'削除済み',role:'WORKER',active:false}});
+ const inactive=await db.user.create({data:{employee_code:'INACTIVE-USER',name:'無効',role:'WORKER',active:false}});
+ await db.$executeRaw`UPDATE users SET deleted_at=now() WHERE id=${deleted.id}::uuid`;
+ const users=await service.listUsers(token);
+ assert.ok(!users.some(user=>user.id===deleted.id));
+ assert.ok(users.some(user=>user.id===inactive.id));
+ await assert.rejects(service.updateUser(token,deleted.id,{name:'復元',role:'WORKER',active:true,password:'Abcd1234'}),status(404));
+ assert.equal((await db.user.findUniqueOrThrow({where:{id:deleted.id}})).active,false);
+});
+
 test('パスワードはsalt付きハッシュで保持し、不正パスワードを拒否する', async()=>{
   const a=await hashPassword(password), b=await hashPassword(password);
   assert.notEqual(a,b); assert.ok(!a.includes(password));
@@ -44,9 +56,27 @@ test('パスワードはsalt付きハッシュで保持し、不正パスワー�
   assert.equal(await verifyPassword(password,'invalid'),false);
   await assert.rejects(hashPassword('short'));
 });
+test('パスワードは8文字と128文字を受け付け7文字と129文字を拒否する', async () => {
+ for (const value of ['Abcd1234', 'x'.repeat(128)]) assert.equal(await verifyPassword(value, await hashPassword(value)), true);
+ for (const value of ['Abc1234', 'x'.repeat(129)]) await assert.rejects(hashPassword(value));
+});
+
+test('8文字でユーザーを登録・ログイン・変更でき、不正な長さは保存しない', async () => {
+ const adminToken = (await service.login(codes[1], password)).token;
+ for (const value of ['a'.repeat(7), 'a'.repeat(129)]) await assert.rejects(service.createUser(adminToken, { employee_code: 'BAD-LENGTH-' + value.length, name: '境界値', role: 'WORKER', password: value }), status(400));
+ const user = await service.createUser(adminToken, { employee_code: 'EIGHT-CHARS', name: '8文字利用者', role: 'WORKER', password: 'Abcd1234' });
+ const first = await service.login(user.employee_code, 'Abcd1234');
+ for (const value of ['a'.repeat(7), 'a'.repeat(129)]) await assert.rejects(service.updateUser(adminToken, user.id, { name: user.name, role: 'WORKER', active: true, password: value }), status(400));
+ assert.equal((await service.authenticate(first.token)).id, user.id);
+ await service.updateUser(adminToken, user.id, { name: user.name, role: 'WORKER', active: true, password: 'Zyxw9876' });
+ await assert.rejects(service.authenticate(first.token), status(401));
+ await assert.rejects(service.login(user.employee_code, 'Abcd1234'), status(401));
+ assert.equal((await service.login(user.employee_code, 'Zyxw9876')).user.id, user.id);
+});
+
 test('2ロールの全操作が仕様の権限表と一致する',()=>{
   const expected = [
-    ['inventory:read','inventory:issue','inventory:receive','history:own','tools:create','tools:update'],
+    ['inventory:read','inventory:issue','inventory:receive','history:own','tools:create'],
     Object.keys(permissions),
   ];
   for(let i=0;i<roles.length;i++) for(const permission of Object.keys(permissions))

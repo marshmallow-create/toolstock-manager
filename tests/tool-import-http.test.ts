@@ -12,7 +12,7 @@ async function workbook(code:string,category='ドリル'){
  const book=new ExcelJS.Workbook(),sheet=book.addWorksheet('工具登録');sheet.addRow(IMPORT_HEADERS);sheet.addRow([code,'一括テスト工具',category,5,3,2,123.45,'17361','B-01']);
  return new Uint8Array(await book.xlsx.writeBuffer());
 }
-const upload=(data:Uint8Array,action='preview',role:string|null='WORKER',name='tools.xlsx',from=origin)=>{
+const upload=(data:Uint8Array,action='preview',role:string|null='ADMIN',name='tools.xlsx',from=origin)=>{
  const body=new FormData();body.set('file',new File([data as BlobPart],name));body.set('action',action);
  return request('/api/tools/import',role ?? undefined,{method:'POST',headers:{Origin:from},body});
 };
@@ -27,15 +27,20 @@ before(async()=>{
 },{timeout:25000});
 after(async()=>{if(server && server.exitCode===null){server.kill();await new Promise(resolve=>server.once('exit',resolve));}await fixture?.close();});
 
-test('作業者・管理者の画面とテンプレート、匿名の拒否',async()=>{
+test('Excel画面とテンプレートは管理者だけに許可し、作業者へのリンクを表示しない',async()=>{
  assert.equal((await request('/tools/import')).status,307);
  assert.equal((await request('/api/tools/import/template')).status,401);
  for(const role of ['WORKER','ADMIN']){
-  const html=await (await request('/tools/new',role)).text();assert.ok(html.includes('href="/tools/import"'));
-  const page=await request('/tools/import',role);assert.equal(page.status,200);assert.ok((await page.text()).includes('内容を確認する'));
-  const template=await request('/api/tools/import/template',role);assert.equal(template.status,200);assert.ok(template.headers.get('content-type')?.includes('spreadsheetml'));assert.match(template.headers.get('content-disposition')??'',/xlsx/);
+  const html=await (await request('/tools/new',role)).text();assert.equal(html.includes('href="/tools/import"'),role==='ADMIN');
+  const page=await request('/tools/import',role);assert.equal(page.status,role==='ADMIN'?200:307);
+  const template=await request('/api/tools/import/template',role);assert.equal(template.status,role==='ADMIN'?200:403);
+  if(role==='WORKER'){assert.ok(page.headers.get('location')?.includes('/dashboard?denied=1'));continue;}
+  assert.ok((await page.text()).includes('内容を確認する'));assert.ok(template.headers.get('content-type')?.includes('spreadsheetml'));assert.match(template.headers.get('content-disposition')??'',/xlsx/);
   const book=new ExcelJS.Workbook();await book.xlsx.load(Buffer.from(await template.arrayBuffer()) as never);assert.equal(book.worksheets[0].getCell('A1').value,'品目コード');
  }
+ const data=await workbook('WORKER-DENIED');
+ for(const action of ['preview','commit'])assert.equal((await upload(data,action,'WORKER')).status,403);
+ assert.equal(await fixture.db.tool.count({where:{tool_code:'WORKER-DENIED'}}),0);
 });
 test('確認は書き込まず、確定で在庫・履歴を保存し再送は重複になる',async()=>{
  const buffer=await workbook('IMPORT-HTTP');
@@ -44,17 +49,17 @@ test('確認は書き込まず、確定で在庫・履歴を保存し再送は�
  const confirmed=await upload(buffer,'commit');assert.equal(confirmed.status,201);assert.deepEqual(await confirmed.json(),{count:1});
  const tool=await fixture.db.tool.findUniqueOrThrow({where:{tool_code:'IMPORT-HTTP'}});assert.equal(tool.department,'17361');assert.equal(tool.unit_price?.toFixed(2),'123.45');
  assert.equal((await fixture.db.stockBalance.findFirstOrThrow({where:{tool_id:tool.id}})).on_hand,5);
- assert.equal((await fixture.db.inventoryTransaction.findFirstOrThrow({where:{tool_id:tool.id}})).actor_user_id,fixture.users.WORKER);
+ assert.equal((await fixture.db.inventoryTransaction.findFirstOrThrow({where:{tool_id:tool.id}})).actor_user_id,fixture.users.ADMIN);
  assert.equal((await upload(buffer,'commit')).status,400);assert.equal(await fixture.db.tool.count(),1);
 });
 test('不正行・形式・サイズ・認証・Originを拒否する',async()=>{
  const invalid=await upload(await workbook('INVALID-IMPORT','その他'));const preview=await invalid.json();assert.equal(preview.valid,false);assert.ok(preview.rows[0].errors.length>0);
  assert.equal((await upload(await workbook('INVALID-IMPORT','その他'),'commit')).status,400);
  const good=await workbook('NO-AUTH');assert.equal((await upload(good,'preview',null)).status,401);
- assert.equal((await upload(good,'preview','WORKER','tools.xlsx','https://evil.invalid')).status,403);
- assert.equal((await upload(good,'preview','WORKER','tools.xls')).status,400);
+ assert.equal((await upload(good,'preview','ADMIN','tools.xlsx','https://evil.invalid')).status,403);
+ assert.equal((await upload(good,'preview','ADMIN','tools.xls')).status,400);
  assert.equal((await upload(new Uint8Array(2*1024*1024+1))).status,413);
  assert.equal((await upload(new TextEncoder().encode('bad'))).status,400);
- assert.equal((await request('/api/tools/import','WORKER',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:'{}'})).status,415);
+ assert.equal((await request('/api/tools/import','ADMIN',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:'{}'})).status,415);
  assert.equal(await fixture.db.tool.count({where:{tool_code:{in:['INVALID-IMPORT','NO-AUTH']}}}),0);
 });

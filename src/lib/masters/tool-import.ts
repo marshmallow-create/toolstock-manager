@@ -38,12 +38,12 @@ async function inspectImport(db: ImportClient, rows: ImportRow[]) {
 }
 
 export async function previewToolImport(db: PrismaClient, auth: AuthService, token: string | undefined, rows: ImportRow[]) {
- await auth.authenticate(token,'tools:create');
+ await auth.authenticate(token,'tools:import');
  return inspectImport(db, rows);
 }
 export async function commitToolImport(db: PrismaClient, auth: AuthService, token: string | undefined, rows: ImportRow[]) {
- await auth.authenticate(token,'tools:create');
- return conflict(() => auth.authorized(token,['tools:create'],async(tx,actor)=>{
+ await auth.authenticate(token,'tools:import');
+ return conflict(() => auth.authorized(token,['tools:import'],async(tx,actor)=>{
   const preview = await inspectImport(tx,rows);
   if (!preview.valid) throw new AuthError(400,'登録できない行があります。内容を確認し直してください。');
   for (const row of preview.rows) await createToolInTransaction(tx,actor,row.values);
