@@ -46,7 +46,7 @@ after(async () => {
  await fixture?.close();
 });
 
-test('マスタAPIは匿名401、全2ロールの在庫参照、管理者の条件閲覧、作業者の単価非公開', async () => {
+test('マスタAPIは匿名401、全2ロールが在庫と単価を参照できる', async () => {
  for (const path of ['/api/tools', '/api/tools/' + toolId]) assert.equal((await request(path)).status, 401);
  for (const role of ['WORKER', 'ADMIN']) {
   const response = await request('/api/tools?q=http-tool', role); assert.equal(response.status, 200);
@@ -54,8 +54,7 @@ test('マスタAPIは匿名401、全2ロールの在庫参照、管理者の条�
   assert.equal((await response.json()).tools[0].id, toolId);
   const detail = await request('/api/tools/' + toolId, role); assert.equal(detail.status, 200);
   const data = await detail.json();
-  if (role === 'WORKER') { assert.ok(!('supplier_items' in data.tool)); assert.ok(!JSON.stringify(data).includes('1234.56')); }
-  else {assert.ok(!('supplier_items' in data.tool));assert.equal(data.tool.unit_price,'1234.56');}
+  assert.ok(!('supplier_items' in data.tool));assert.equal(data.tool.unit_price,'1234.56');
  }
  assert.equal((await request('/api/masters/suppliers', 'WORKER')).status, 404);
  assert.equal((await request('/api/masters/suppliers', 'ADMIN')).status, 404);
@@ -181,9 +180,11 @@ test('新規登録画面の一覧と同じ項目から登録しカテゴリー�
  assert.equal(row.category, 'DRILL'); assert.equal(row.department, '17362'); assert.deepEqual(row.shelf_codes, ['SHELF-FORM']);
  const list = await request('/dashboard?tool_code=LIST-FORM', 'ADMIN');
  const listHtml = await list.text();
- for (const value of ['一覧形式の工具', '17362', 'SHELF-FORM', '456.78']) assert.ok(listHtml.includes(value));
+ for (const value of ['一覧形式の工具', '17362', 'SHELF-FORM', '¥457']) assert.ok(listHtml.includes(value));
+ assert.match(listHtml, /<td\b[^>]*>¥457<\/td>/);
+ assert.doesNotMatch(listHtml, /¥456\.78/);
  const worker = await request('/api/tools?tool_code=LIST-FORM', 'WORKER');
- assert.equal((await worker.json()).tools[0].unit_price, null);
+ assert.equal((await worker.json()).tools[0].unit_price, '456.78');
  const editPage = await request('/tools/' + row.id + '/edit', 'ADMIN');
  assert.match(await editPage.text(), /name="shelf_code"[^>]*value="SHELF-FORM"/);
  const changed = await form('/api/tools/' + row.id, 'ADMIN', { ...base, tool_code: 'LIST-FORM', unit: '個', active: 'true', shelf_code: 'SHELF-CHANGED' });
@@ -289,7 +290,6 @@ test('入出庫・工具情報・工具変更履歴の順に表示し、変更�
   for (const label of ['変更日時', '変更内容', '操作者', 'A-01', 'B-02', 'ADMIN']) assert.ok(history.includes(label), label);
   assert.doesNotMatch(history, /安全在庫|目標在庫|数量単位|メーカー|型番/);
   assert.match(history, /\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}/);
-  if (role === 'WORKER') { assert.ok(!html.includes('876.54')); assert.ok(!html.includes('987.65')); }
-  else { assert.ok(history.includes('876.54')); assert.ok(history.includes('987.65')); }
+  assert.ok(history.includes('単価：877 → 988')); assert.doesNotMatch(history, /876\.54|987\.65/);
  }
 });

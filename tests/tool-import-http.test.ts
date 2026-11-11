@@ -16,6 +16,10 @@ const upload=(data:Uint8Array,action='preview',role:string|null='ADMIN',name='to
  const body=new FormData();body.set('file',new File([data as BlobPart],name));body.set('action',action);
  return request('/api/tools/import',role ?? undefined,{method:'POST',headers:{Origin:from},body});
 };
+const uploadUpdate=(data:Uint8Array,action='preview',previewToken='',role='ADMIN')=>{
+ const body=new FormData();body.set('file',new File([data as BlobPart],'update.xlsx'));body.set('action',action);body.set('mode','update');body.set('previewToken',previewToken);
+ return request('/api/tools/import',role,{method:'POST',headers:{Origin:origin},body});
+};
 before(async()=>{
  fixture=await databaseFixture('tool_import_http');
  const probe=createServer();await new Promise<void>(resolve=>probe.listen(0,'127.0.0.1',resolve));const port=(probe.address() as {port:number}).port;await new Promise<void>(resolve=>probe.close(()=>resolve()));origin='http://127.0.0.1:'+port;
@@ -62,4 +66,30 @@ test('不正行・形式・サイズ・認証・Originを拒否する',async()=>
  assert.equal((await upload(new TextEncoder().encode('bad'))).status,400);
  assert.equal((await request('/api/tools/import','ADMIN',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:'{}'})).status,415);
  assert.equal(await fixture.db.tool.count({where:{tool_code:{in:['INVALID-IMPORT','NO-AUTH']}}}),0);
+});
+
+test('変更テンプレートとAPIで変更前後を確認し、空欄保持・権限・再送・競合を検証する',async()=>{
+ const template=await request('/api/tools/import/template?mode=update','ADMIN');assert.equal(template.status,200);
+ const book=new ExcelJS.Workbook();await book.xlsx.load(Buffer.from(await template.arrayBuffer()) as never);
+ const sheet=book.getWorksheet('工具変更');assert.ok(sheet);assert.equal(sheet.getCell('G2').numFmt,'0');
+ const page=await (await request('/tools/import','ADMIN')).text();assert.ok(page.includes('一括変更'));
+ assert.equal((await request('/api/tools/import/template?mode=update','WORKER')).status,403);
+ assert.equal((await request('/api/tools/import/template?mode=bad','ADMIN')).status,400);
+ assert.equal((await upload(await workbook('UPDATE-HTTP'),'commit')).status,201);
+ sheet.getRow(2).values=['UPDATE-HTTP','一括変更後','','0','','','1250','',''];
+ const data=new Uint8Array(await book.xlsx.writeBuffer());
+ assert.equal((await uploadUpdate(data,'preview','','WORKER')).status,403);
+ const response=await uploadUpdate(data);assert.equal(response.status,200);const preview=await response.json();
+ assert.equal(preview.valid,true);assert.equal(preview.rows[0].before.name,'一括テスト工具');assert.equal(preview.rows[0].values.name,'一括変更後');
+ assert.equal((await uploadUpdate(data,'commit')).status,409);
+ const result=await uploadUpdate(data,'commit',preview.previewToken);assert.equal(result.status,200);assert.deepEqual(await result.json(),{count:1});
+ const tool=await fixture.db.tool.findUniqueOrThrow({where:{tool_code:'UPDATE-HTTP'}});assert.equal(tool.name,'一括変更後');assert.equal(tool.unit_price?.toString(),'1250');assert.equal(tool.department,'17361');assert.equal(tool.shelf_code,'B-01');
+ assert.equal((await fixture.db.stockBalance.findFirstOrThrow({where:{tool_id:tool.id}})).on_hand,0);
+ assert.equal(await fixture.db.auditLog.count({where:{action:'TOOL_UPDATED',entity_id:tool.id}}),1);
+ assert.equal((await uploadUpdate(data,'commit',preview.previewToken)).status,409);
+ sheet.getRow(2).getCell(2).value='在庫競合';
+ const changed=new Uint8Array(await book.xlsx.writeBuffer()), current=await (await uploadUpdate(changed)).json();
+ await fixture.db.stockBalance.updateMany({where:{tool_id:tool.id},data:{on_hand:1}});
+ assert.equal((await uploadUpdate(changed,'commit',current.previewToken)).status,409);
+ assert.equal((await fixture.db.tool.findUniqueOrThrow({where:{id:tool.id}})).name,'一括変更後');
 });

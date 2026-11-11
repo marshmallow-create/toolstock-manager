@@ -6,7 +6,7 @@ import { categoryAliases } from '../tool-options';
 
 export async function listTools(db: PrismaClient, auth: AuthService, token: string | undefined, input: Input = {}) {
  const actor = await auth.authenticate(token, 'inventory:read');
- const showPrice = can(actor.role, 'masters:write');
+ const showPrice = can(actor.role, 'prices:read');
  const q = text(input.q ?? '', '検索語', 100, true), category = categoryValue(input.category, true);
  const toolCode = text(input.tool_code ?? '', '品目コード', 100, true), name = text(input.name ?? '', '品目名', 100, true);
  const status = input.status ?? 'active';
@@ -44,7 +44,7 @@ export async function toolDetail(db: PrismaClient, auth: AuthService, token: str
  if (!tool) throw new AuthError(404, '工具が見つかりません');
  const { inventory_policies_tool_id_children: policy, stock_balances_tool_id_children: balances, purchase_order_items_tool_id_children: orders, reorder_candidates_tool_id_children: candidates, unit_price: basePrice, ...basic } = tool;
  const stocks = balances.map(({ location_id_record: location, ...balance }) => ({ ...balance, location, available: balance.on_hand - balance.reserved }));
- const showPrice = can(actor.role, 'masters:write');
+ const showPrice = can(actor.role, 'prices:read');
  return { ...basic, policy, stocks,
   on_hand: stocks.reduce((sum, stock) => sum + stock.on_hand, 0),
   on_order: orders.reduce((sum, order) => sum + Math.max(0, order.ordered_quantity - order.received_quantity), 0),

@@ -27,7 +27,7 @@ export function ToolForm({ action, tool }: { action: string; tool?: ToolValues }
   <NumberField label="在庫" name="on_hand" defaultValue={0} />
   <NumberField label="発注ライン" name="reorder_point" defaultValue={0} />
   <NumberField label="発注数" name="order_quantity" defaultValue={0} />
-  <Field label="単価" name="unit_price" required inputMode="decimal" pattern="[0-9]{1,12}(\.[0-9]{1,2})?" maxLength={15} defaultValue="0.00" />
+  <Field label="単価" name="unit_price" required inputMode="decimal" pattern="[0-9]{1,12}(\.[0-9]{1,2})?" maxLength={15} defaultValue="0" />
   <DepartmentField />
   <Field label="棚番" name="shelf_code" maxLength={100} />
   <label className="grid gap-1">発注済み<output className="rounded border border-slate-200 bg-slate-50 px-3 py-1.5 text-slate-600" title="発注データから自動集計します">0</output></label>
@@ -43,7 +43,7 @@ export function ToolForm({ action, tool }: { action: string; tool?: ToolValues }
   <NumberField label="発注数" name="order_quantity" defaultValue={tool.order_quantity} />
   <input type="hidden" name="expected_on_hand" value={tool.on_hand} />
   <input type="hidden" name="unit" value={tool.unit} />
-  {tool.unit_price !== undefined && <Field label="単価" name="unit_price" required inputMode="decimal" pattern="[0-9]{1,12}(\.[0-9]{1,2})?" maxLength={15} defaultValue={tool.unit_price ?? '0.00'} />}
+  {tool.unit_price !== undefined && <Field label="単価" name="unit_price" required inputMode="decimal" pattern="[0-9]{1,12}(\.[0-9]{1,2})?" maxLength={15} defaultValue={tool.unit_price?.replace(/\.0+$/, '') ?? '0'} />}
   <DepartmentField value={tool.department} />
   <Field label="棚番" name="shelf_code" maxLength={Math.max(100, tool.shelf_code?.length ?? 0)} defaultValue={tool.shelf_code ?? ''} />
   <Active value={tool?.active} />

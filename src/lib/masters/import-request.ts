@@ -1,5 +1,5 @@
 import { AuthError } from '../auth/service';
-import { MAX_WORKBOOK_BYTES } from './tool-workbook';
+import { MAX_WORKBOOK_BYTES, type WorkbookMode } from './tool-workbook';
 
 export async function readImportFile(request:Request) {
  const contentType=request.headers.get('content-type') ?? '';
@@ -12,10 +12,12 @@ export async function readImportFile(request:Request) {
  let data:FormData;
  try{data=await new Response(new Uint8Array(Buffer.concat(chunks)),{headers:{'content-type':contentType}}).formData();}
  catch{throw new AuthError(400,'アップロード内容を読み込めません。ファイルを選び直してください。');}
- const file=data.get('file'), action=data.get('action');
+ const file=data.get('file'), action=data.get('action'), mode=data.get('mode')??'create', previewToken=data.get('previewToken')??'';
  if(!(file instanceof File) || !file.size)throw new AuthError(400,'Excelファイルを選択してください。');
  if(!/\.xlsx$/i.test(file.name))throw new AuthError(400,'拡張子が.xlsxのExcelファイルを選択してください。');
  if(file.size>MAX_WORKBOOK_BYTES)throw new AuthError(413,'ファイルは2MB以下にしてください。');
  if(action!=='preview' && action!=='commit')throw new AuthError(400,'取込操作を確認してください。');
- return {buffer:Buffer.from(await file.arrayBuffer()),action};
+ if(mode!=='create' && mode!=='update')throw new AuthError(400,'登録・変更の種類を確認してください。');
+ if(typeof previewToken!=='string' || previewToken.length>64)throw new AuthError(400,'確認内容を読み取れません。');
+ return {buffer:Buffer.from(await file.arrayBuffer()),action,mode:mode as WorkbookMode,previewToken};
 }

@@ -56,6 +56,18 @@ export async function mutateInventory(db:PrismaClient,auth:AuthService,token:str
    const transaction=await tx.inventoryTransaction.create({data:{tool_id:toolId,location_id:locationId,actor_user_id:actor.id,type,quantity:delta,idempotency_key:key,reverses_id:original?.id??null,reason:operation==='reverse'?(request.reason??'入出庫履歴から取消'):request.reason,on_hand_after:after,unit_price:unitPrice}});
    const result:InventoryResult={id:transaction.id,type,tool_id:toolId,location_id:locationId,actor_user_id:actor.id,machine_id:null,quantity:delta,on_hand_before:before,on_hand_after:after,reserved,reason:transaction.reason,reverses_id:transaction.reverses_id,created_at:transaction.created_at.toISOString()};
    await audit(tx,actor.id,'INVENTORY_MUTATION','inventory_transactions',transaction.id,{request,request_fingerprint:signature,result});
+   if(operation==='issue'){
+    const [balance,policy,ordered]=await Promise.all([
+     tx.stockBalance.aggregate({where:{tool_id:toolId},_sum:{on_hand:true}}),
+     tx.inventoryPolicy.findUnique({where:{tool_id:toolId},select:{reorder_point:true}}),
+     tx.purchaseOrderItem.findMany({where:{tool_id:toolId,order_id_record:{status:{in:['ORDERED','PARTIALLY_RECEIVED']}}},select:{ordered_quantity:true,received_quantity:true}}),
+    ]);
+    const onOrder=ordered.reduce((sum,item)=>sum+Math.max(item.ordered_quantity-item.received_quantity,0),0);
+    if((balance._sum.on_hand??0)<(policy?.reorder_point??0)+onOrder){
+     const entry=await tx.orderListEntry.upsert({where:{tool_id:toolId},create:{tool_id:toolId,trigger_transaction_id:transaction.id},update:{trigger_transaction_id:transaction.id}});
+     await audit(tx,actor.id,'ORDER_LIST_UPDATED','order_list_entries',entry.id,{tool_id:toolId,trigger_transaction_id:transaction.id});
+    }
+   }
    return result;
   });
  }catch(error){return translateError(error);}

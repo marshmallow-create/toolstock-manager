@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { categoryLabel } from '@/lib/tool-options';
+import { formatPrice } from '@/lib/format-price';
 import { randomUUID } from 'node:crypto';
 import { panelClass } from './masters';
 import { InventoryCancelForm } from './inventory-cancel-form';
@@ -25,7 +26,7 @@ export function HistoryTable({ items, canReverse = false, returnTo }: { items: H
    <td className="border-b tabular-nums">{Math.abs(item.quantity).toLocaleString('ja-JP')} {item.tool.unit}</td>
    <td className="border-b">{item.actor.name}{!item.actor.active && '（無効）'}</td>
    <td className="border-b tabular-nums">{item.on_hand_after?.toLocaleString('ja-JP') ?? '—'}</td>
-   <td className="border-b tabular-nums">{item.unit_price == null ? '—' : '¥' + Number(item.unit_price).toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+   <td className="border-b tabular-nums">{item.unit_price == null ? '—' : '¥' + formatPrice(item.unit_price)}</td>
   </tr>)}</tbody>
  </table></div> : <p className={panelClass}>該当する履歴はありません。</p>;
 }

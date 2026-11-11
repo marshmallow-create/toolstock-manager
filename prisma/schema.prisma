@@ -66,6 +66,7 @@ model Tool {
  inventory_policies_tool_id_children InventoryPolicy? @relation("inventory_policies_tool_id")
  purchase_order_items_tool_id_children PurchaseOrderItem[] @relation("purchase_order_items_tool_id")
  reorder_candidates_tool_id_children ReorderCandidate[] @relation("reorder_candidates_tool_id")
+ order_list_entry OrderListEntry? @relation("order_list_entries_tool_id")
  @@map("tools")
 }
 model Location {
@@ -111,6 +112,7 @@ model InventoryTransaction {
  actor_user_id_record User @relation("inventory_transactions_actor_user_id", fields: [actor_user_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
  reverses_id_record InventoryTransaction? @relation("inventory_transactions_reverses_id", fields: [reverses_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
  inventory_transactions_reverses_id_children InventoryTransaction? @relation("inventory_transactions_reverses_id")
+ order_list_entries_trigger_transaction_id_children OrderListEntry[] @relation("order_list_entries_trigger_transaction_id")
  @@index([tool_id, created_at])
  @@index([actor_user_id, created_at])
  @@map("inventory_transactions")
@@ -180,6 +182,17 @@ model ReorderCandidate {
  updated_at DateTime @updatedAt @db.Timestamptz(3)
  tool_id_record Tool @relation("reorder_candidates_tool_id", fields: [tool_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
  @@map("reorder_candidates")
+}
+model OrderListEntry {
+ id String @id @default(uuid()) @db.Uuid
+ tool_id String @db.Uuid @unique
+ trigger_transaction_id String @db.Uuid
+ created_at DateTime @default(now()) @db.Timestamptz(3)
+ updated_at DateTime @updatedAt @db.Timestamptz(3)
+ tool_id_record Tool @relation("order_list_entries_tool_id", fields: [tool_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+ trigger_transaction_id_record InventoryTransaction @relation("order_list_entries_trigger_transaction_id", fields: [trigger_transaction_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
+ @@index([trigger_transaction_id])
+ @@map("order_list_entries")
 }
 model AuditLog {
  id String @id @default(uuid()) @db.Uuid

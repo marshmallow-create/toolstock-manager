@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { categoryLabel } from '@/lib/tool-options';
+import { formatPrice } from '@/lib/format-price';
 
 type ToolStockRow = {
  id: string; tool_code: string; name: string; category: string;
@@ -19,7 +20,7 @@ export function ToolStockTable({ tools }: { tools: ToolStockRow[] }) {
    <td className="border-b p-4 tabular-nums" title="発注済みの未入荷数">{tool.on_order.toLocaleString('ja-JP')}</td>
    <td className="border-b p-4 tabular-nums">{tool.reorder_point?.toLocaleString('ja-JP') ?? '—'}</td>
    <td className="border-b p-4 tabular-nums" title="未処理の発注候補数">{tool.order_quantity.toLocaleString('ja-JP')}</td>
-   <td className="border-b p-4 tabular-nums" title="工具の単価">{tool.unit_price == null ? '—' : '¥' + Number(tool.unit_price).toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+   <td className="border-b p-4 tabular-nums" title="工具の単価">{tool.unit_price == null ? '—' : '¥' + formatPrice(tool.unit_price)}</td>
    <td className="border-b p-4">{tool.department || '—'}</td>
    <td className="border-b p-4">{tool.shelf_code || '—'}</td>
   </tr>)}</tbody>

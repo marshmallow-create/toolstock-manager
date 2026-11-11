@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { databaseFixture } from './helpers/database';
 import { AuthService, AuthError } from '../src/lib/auth/service';
 import { previewToolImport, commitToolImport } from '../src/lib/masters/tool-import';
+import { previewToolUpdate, commitToolUpdate } from '../src/lib/masters/tool-update';
 
 let fixture: Awaited<ReturnType<typeof databaseFixture>>;
 let auth: AuthService;
@@ -10,6 +11,48 @@ before(async () => { fixture = await databaseFixture('tool_import'); auth = new 
 after(async () => { await fixture?.close(); });
 const row = (code: string, rowNumber = 2) => ({ rowNumber, values: { tool_code: code, name: '一括ドリル', category: 'ドリル', on_hand: '7', reorder_point: '3', order_quantity: '4', unit_price: '125.50', department: '17314', shelf_code: 'A-01' } });
 const status = (n: number) => (error: unknown) => error instanceof AuthError && error.status === n;
+
+test('一括変更は空欄を保持し0も更新でき、通常変更と同じ履歴を作る',async()=>{
+ await commitToolImport(fixture.db,auth,fixture.tokens.ADMIN,[row('UPDATE-A')]);
+ const rows=[{rowNumber:2,values:{tool_code:'update-a',name:'変更後',on_hand:'0',reorder_point:'0',order_quantity:'0',unit_price:'0',department:'',shelf_code:''}}];
+ const preview=await previewToolUpdate(fixture.db,auth,fixture.tokens.ADMIN,rows);
+ assert.equal(preview.valid,true);assert.equal(preview.rows[0].before.name,'一括ドリル');
+ assert.equal((await fixture.db.tool.findUniqueOrThrow({where:{tool_code:'UPDATE-A'}})).name,'一括ドリル');
+ assert.equal((await commitToolUpdate(fixture.db,auth,fixture.tokens.ADMIN,rows,preview.previewToken)).count,1);
+ const tool=await fixture.db.tool.findUniqueOrThrow({where:{tool_code:'UPDATE-A'}});
+ assert.equal(tool.name,'変更後');assert.equal(tool.department,'17314');assert.equal(tool.shelf_code,'A-01');assert.equal(tool.category,'DRILL');assert.equal(tool.unit_price?.toString(),'0');
+ assert.equal((await fixture.db.stockBalance.findFirstOrThrow({where:{tool_id:tool.id}})).on_hand,0);
+ assert.equal((await fixture.db.inventoryPolicy.findUniqueOrThrow({where:{tool_id:tool.id}})).reorder_point,0);
+ assert.equal(await fixture.db.reorderCandidate.count({where:{tool_id:tool.id,status:'OPEN'}}),0);
+ assert.equal(await fixture.db.auditLog.count({where:{entity_id:tool.id,action:'TOOL_UPDATED'}}),1);
+ await assert.rejects(commitToolUpdate(fixture.db,auth,fixture.tokens.ADMIN,rows,preview.previewToken),status(409));
+});
+
+test('一括変更は存在しないコード・重複・不正値・空の変更を行番号付きで拒否する',async()=>{
+ const rows=[{rowNumber:2,values:{tool_code:'MISSING',name:'名前'}},{rowNumber:5,values:{tool_code:'UPDATE-A',on_hand:'-1'}},{rowNumber:6,values:{tool_code:'UPDATE-A'}}];
+ const preview=await previewToolUpdate(fixture.db,auth,fixture.tokens.ADMIN,rows);
+ assert.equal(preview.valid,false);assert.ok(preview.rows.every(row=>row.errors.length>0));assert.equal(preview.rows[1].rowNumber,5);
+ await assert.rejects(commitToolUpdate(fixture.db,auth,fixture.tokens.ADMIN,rows,preview.previewToken),status(400));
+ for(const token of [undefined,fixture.tokens.WORKER]){
+  await assert.rejects(previewToolUpdate(fixture.db,auth,token,rows),status(token?403:401));
+  await assert.rejects(commitToolUpdate(fixture.db,auth,token,rows,''),status(token?403:401));
+ }
+});
+
+test('確認後の在庫変更やファイル差し替えを検出し、途中失敗時は全件を戻す',async()=>{
+ await commitToolImport(fixture.db,auth,fixture.tokens.ADMIN,[row('UPDATE-RACE'),row('UPDATE-SECOND',3)]);
+ const rows=[{rowNumber:2,values:{tool_code:'UPDATE-RACE',name:'変更1'}},{rowNumber:3,values:{tool_code:'UPDATE-SECOND',name:'変更2'}}];
+ const preview=await previewToolUpdate(fixture.db,auth,fixture.tokens.ADMIN,rows);
+ await fixture.db.stockBalance.updateMany({where:{tool_id_record:{tool_code:'UPDATE-RACE'}},data:{on_hand:8}});
+ await assert.rejects(commitToolUpdate(fixture.db,auth,fixture.tokens.ADMIN,rows,preview.previewToken),status(409));
+ const current=await previewToolUpdate(fixture.db,auth,fixture.tokens.ADMIN,rows);
+ await assert.rejects(commitToolUpdate(fixture.db,auth,fixture.tokens.ADMIN,[{...rows[0],values:{...rows[0].values,name:'差替'}}],current.previewToken),status(409));
+ await fixture.admin.query("CREATE FUNCTION fail_update_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='TOOL_UPDATED' AND NEW.details->'after'->>'name'='変更2' THEN RAISE EXCEPTION 'test'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_update_batch BEFORE INSERT ON audit_logs FOR EACH ROW EXECUTE FUNCTION fail_update_audit()");
+ try{
+  await assert.rejects(commitToolUpdate(fixture.db,auth,fixture.tokens.ADMIN,rows,current.previewToken));
+  for(const tool of await fixture.db.tool.findMany({where:{tool_code:{in:['UPDATE-RACE','UPDATE-SECOND']}}}))assert.equal(tool.name,'一括ドリル');
+ }finally{await fixture.admin.query('DROP TRIGGER reject_update_batch ON audit_logs; DROP FUNCTION fail_update_audit()');}
+});
 
 test('Excelの確認・確定は管理者だけが利用でき、確認後も権限を再検証する', async () => {
  for (const token of [undefined, fixture.tokens.WORKER]) {
@@ -73,5 +116,17 @@ test('上限200件の一括登録と空欄数量の0扱い',async()=>{
  const rows=Array.from({length:200},(_,index)=>({...row('LIMIT-'+index,index+2),values:{...row('LIMIT-'+index).values,on_hand:'',reorder_point:'',order_quantity:''}}));
  assert.equal((await commitToolImport(fixture.db,auth,fixture.tokens.ADMIN,rows)).count,200);
  assert.equal(await fixture.db.tool.count({where:{tool_code:{startsWith:'LIMIT-'}}}),200);
+ assert.equal(await fixture.db.inventoryTransaction.count({where:{tool_id_record:{tool_code:{startsWith:'LIMIT-'}}}}),0);
+});
+
+test('上限200件を一括変更し、空欄の在庫方針や在庫を保持する',async()=>{
+ const first=await fixture.db.tool.findUniqueOrThrow({where:{tool_code:'LIMIT-0'}});
+ await fixture.db.inventoryPolicy.update({where:{tool_id:first.id},data:{safety_stock:1,reorder_point:2,target_stock:3}});
+ const rows=Array.from({length:200},(_,index)=>({rowNumber:index+2,values:{tool_code:'LIMIT-'+index,name:'変更-'+index}}));
+ const preview=await previewToolUpdate(fixture.db,auth,fixture.tokens.ADMIN,rows);assert.equal(preview.valid,true);
+ assert.equal((await commitToolUpdate(fixture.db,auth,fixture.tokens.ADMIN,rows,preview.previewToken)).count,200);
+ assert.equal(await fixture.db.tool.count({where:{tool_code:{startsWith:'LIMIT-'},name:{startsWith:'変更-'}}}),200);
+ const policy=await fixture.db.inventoryPolicy.findUniqueOrThrow({where:{tool_id:first.id}});
+ assert.equal(policy.safety_stock,1);assert.equal(policy.reorder_point,2);assert.equal(policy.target_stock,3);
  assert.equal(await fixture.db.inventoryTransaction.count({where:{tool_id_record:{tool_code:{startsWith:'LIMIT-'}}}}),0);
 });

@@ -2,6 +2,7 @@ import type { PrismaClient } from '../../generated/prisma/client';
 import { AuthService, AuthError } from '../auth/service';
 import { can } from '../auth/permissions';
 import { categoryLabel } from '../tool-options';
+import { formatPrice } from '../format-price';
 import { uuid } from './validation';
 
 const record = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -19,7 +20,7 @@ export async function toolChangeHistory(db: PrismaClient, auth: AuthService, tok
   { entity_type: 'tools', entity_id: id, action: { in: ['TOOL_UPDATED', 'TOOL_ORDER_QUANTITY_UPDATED'] } },
   { entity_type: 'inventory_transactions', action: 'TOOL_STOCK_UPDATED', details: { path: ['transaction', 'tool_id'], equals: id } },
  ] }, select: { id: true, action: true, details: true, created_at: true, actor_user_id_record: { select: { employee_code: true, name: true } } }, orderBy: [{ created_at: 'desc' }, { id: 'desc' }] });
- const priceVisible = can(actor.role, 'masters:write');
+ const priceVisible = can(actor.role, 'prices:read');
  return logs.flatMap(log => {
   const detail = record(log.details), changes: string[] = [];
   if (log.action === 'TOOL_UPDATED') {
@@ -27,7 +28,7 @@ export async function toolChangeHistory(db: PrismaClient, auth: AuthService, tok
    // Show changes to the tool-edit fields; full internal changes remain in the audit log.
    const fields = [['name', '品目名'], ['category', 'カテゴリー'], ['department', '部門'], ['shelf_code', '棚番'], ['active', '状態'], ['unit_price', '単価']];
    for (const [field, label] of fields) {
-    const format = (value: unknown) => field === 'category' ? categoryLabel(String(value ?? '')) : field === 'active' ? value === true ? '有効' : '無効' : display(value);
+    const format = (value: unknown) => field === 'category' ? categoryLabel(String(value ?? '')) : field === 'active' ? value === true ? '有効' : '無効' : field === 'unit_price' && value !== null && value !== undefined && value !== '' ? formatPrice(String(value)) : display(value);
     if (field === 'unit_price' ? comparablePrice(before[field]) === comparablePrice(after[field]) : format(before[field]) === format(after[field])) continue;
     changes.push(field === 'unit_price' && !priceVisible ? '単価を変更' : `${label}：${format(before[field])} → ${format(after[field])}`);
    }

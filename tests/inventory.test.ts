@@ -153,17 +153,30 @@ test('inactive targets still allow reversal and successful replay',async()=>{
  assert.equal(reversed.on_hand_after,10);
 });
 
-test('own history includes both issue and receive plus their admin reversals',async()=>{
+test('作業者も全員の入出庫・初期在庫・取消履歴を参照できる',async()=>{
  const s=await stock(),own=await service.issue(token('WORKER'),issueInput(s)),other=await service.issue(token('ADMIN'),issueInput(s));
  const receipt=await service.receive(token('WORKER'),issueInput(s,2));const receiptCancel=await service.reverse(token(),{transaction_id:receipt.id,reason:'cancel receipt',request_key:randomUUID()});
  const reversed=await service.reverse(token(),{transaction_id:own.id,reason:'架空訂正',request_key:randomUUID()});
  const list=await service.listHistory(token('WORKER'),{tool_id:s.tool.id});
- assert.equal(list.total,4);assert.ok(list.items.some(item=>item.id===own.id));assert.ok(list.items.some(item=>item.id===reversed.id));
- await assert.rejects(service.historyDetail(token('WORKER'),other.id),status(404));
- await assert.rejects(service.listHistory(token('WORKER'),{actor_user_id:f.users.ADMIN}),status(403));
+ assert.equal(list.total,6);assert.ok(list.items.some(item=>item.id===own.id));assert.ok(list.items.some(item=>item.id===reversed.id));
+ assert.equal((await service.historyDetail(token('WORKER'),other.id)).id,other.id);
+ const filtered=await service.listHistory(token('WORKER'),{tool_id:s.tool.id,actor_user_id:f.users.ADMIN});assert.ok(filtered.items.some(item=>item.id===other.id));assert.ok(filtered.items.every(item=>item.actor.id===f.users.ADMIN));
  assert.equal((await service.listHistory(token('ADMIN'),{tool_id:s.tool.id})).total,6);
- const text=JSON.stringify(await service.historyDetail(token('WORKER'),reversed.id));assert.ok(!text.includes('password_hash'));assert.ok(!text.includes('token_hash'));assert.ok(!text.includes('unit_price'));
- assert.equal((await service.historyOptions(token('WORKER'))).actors.length,1);assert.ok(!('machines' in await service.historyOptions(token())));assert.ok(!('machine' in (await service.historyDetail(token(),own.id))));assert.ok(list.items.some(item=>item.id===receipt.id));assert.ok(list.items.some(item=>item.id===receiptCancel.id));await assert.rejects(service.listHistory(token(),{machine_id:s.machine.id}),status(400));
+ const detail=await service.historyDetail(token('WORKER'),reversed.id);assert.equal(detail.unit_price,null);const text=JSON.stringify(detail);assert.ok(!text.includes('password_hash'));assert.ok(!text.includes('token_hash'));
+ assert.ok((await service.historyOptions(token('WORKER'))).actors.some(actor=>actor.id===f.users.ADMIN));assert.ok(!('machines' in await service.historyOptions(token())));assert.ok(!('machine' in (await service.historyDetail(token(),own.id))));assert.ok(list.items.some(item=>item.id===receipt.id));assert.ok(list.items.some(item=>item.id===receiptCancel.id));await assert.rejects(service.listHistory(token(),{machine_id:s.machine.id}),status(400));
+});
+
+test('履歴作成後の新規作業者も登録前の全履歴と単価を参照でき、取消は制限する',async()=>{
+ const s=await stock(5);await f.db.tool.update({where:{id:s.tool.id},data:{unit_price:'123.45'}});const oldIssue=await service.issue(token(),issueInput(s));
+ const receipt=await service.receive(token('WORKER'),issueInput(s));
+ await service.reverse(token(),{transaction_id:oldIssue.id,request_key:randomUUID()});
+ const oldRows=await service.listHistory(token(),{tool_id:s.tool.id});
+ const user=await f.auth.createUser(token(),{employee_code:'NEW-HISTORY',name:'新規作業者',role:'WORKER',password:f.password});
+ const session=(await f.auth.login(user.employee_code,f.password)).token;
+ const rows=await service.listHistory(session,{tool_id:s.tool.id});assert.equal(rows.total,oldRows.total);assert.deepEqual(new Set(rows.items.map(item=>item.id)),new Set(oldRows.items.map(item=>item.id)));
+ const detail=await service.historyDetail(session,oldIssue.id);assert.equal(detail.id,oldIssue.id);assert.equal(detail.unit_price,'123.45');assert.equal(rows.items.find(item=>item.id===receipt.id)?.unit_price,'123.45');
+ const priced=await service.listHistory(session,{tool_id:s.tool.id,unit_price_min:'123.45',unit_price_max:'123.45'});assert.equal(priced.total,3);assert.ok(priced.items.every(item=>item.unit_price==='123.45'));
+ await assert.rejects(service.reverse(session,{transaction_id:oldIssue.id,request_key:randomUUID()}),status(403));
 });
 
 test('日本時間の日付境界と実在日・期間・種別・ID・ページを検証する',async()=>{
@@ -173,7 +186,7 @@ test('日本時間の日付境界と実在日・期間・種別・ID・ページ
  for(const query of [{from:'2026-02-30'},{from:'2026-11-05',to:'2026-11-04'},{type:'INVALID'},{tool_id:'bad'},{page:'1.5'}])await assert.rejects(service.listHistory(token(),query),status(400));
 });
 
-test('履歴を品目コード・カテゴリー・操作者で絞り込み本人の参照範囲を守る', async () => {
+test('履歴を品目コード・カテゴリー・操作者で全ユーザーが絞り込める', async () => {
  const s = await stock(10);
  const own = await service.issue(token('WORKER'), issueInput(s));
  const other = await service.issue(token(), issueInput(s));
@@ -185,7 +198,7 @@ test('履歴を品目コード・カテゴリー・操作者で絞り込み本�
  assert.deepEqual(ownOnly.items.map(row => row.id), [own.id]);
  assert.equal((await service.listHistory(token(), { ...query, category: 'TAP' })).total, 0);
  assert.equal((await service.listHistory(token(), { ...query, tool_code: 'MISSING' })).total, 0);
- await assert.rejects(service.listHistory(token('WORKER'), { ...query, actor_user_id: f.users.ADMIN }), status(403));
+ assert.deepEqual((await service.listHistory(token('WORKER'), { ...query, actor_user_id: f.users.ADMIN })).items.map(item=>item.id),admin.items.map(item=>item.id));
  for (const bad of [{ tool_code: 'x'.repeat(101) }, { category: 'x'.repeat(65) }, { category: [] }]) await assert.rejects(service.listHistory(token(), bad), status(400));
 });
 
@@ -269,8 +282,8 @@ test('history freezes transaction balance and decimal price and filters inclusiv
  assert.equal(receive.on_hand_after,11);assert.equal(receive.unit_price,'999.99');assert.equal(reverse.on_hand_after,13);assert.equal(reverse.unit_price,'100.25');
  assert.deepEqual((await service.listHistory(token(),{tool_id:s.tool.id,unit_price_min:'100.25',unit_price_max:'100.25'})).items.map(x=>x.id).sort(),[issued.id,reversed.id].sort());
  assert.deepEqual((await service.listHistory(token(),{tool_id:s.tool.id,unit_price_min:'100.25',unit_price_max:'100.25',movement:'RECEIVE'})).items.map(x=>x.id),[reversed.id]);
- assert.equal((await service.historyDetail(token('WORKER'),issued.id)).unit_price,undefined);
- await assert.rejects(service.listHistory(token('WORKER'),{unit_price_min:'0'}),status(403));
+ assert.equal((await service.historyDetail(token('WORKER'),issued.id)).unit_price,'100.25');
+ assert.deepEqual((await service.listHistory(token('WORKER'),{tool_id:s.tool.id,unit_price_min:'100.25',unit_price_max:'100.25'})).items.map(x=>x.id).sort(),[issued.id,reversed.id].sort());
  for(const query of [{unit_price_min:'-1'},{unit_price_max:'1.001'},{unit_price_min:'1e2'},{unit_price_min:'2',unit_price_max:'1'},{movement:'BOGUS'}])await assert.rejects(service.listHistory(token(),query),status(400));
  assert.equal((await service.listHistory(token(),{tool_id:s.tool.id,unit_price_min:'',unit_price_max:''})).items.length,4);
 });

@@ -27,11 +27,12 @@
 | inventory_policies | 工具全体の安全在庫・発注点・目標在庫 |
 | inventory_transactions | 増減数量、操作種別、操作者、取消元、理由、確定残高・単価 |
 | reorder_candidates | 発注候補数とOPEN / CONVERTED / DISMISSED状態 |
+| order_list_entries | 工具ごとに一意の発注リスト掲載行と、最新の掲載対象出庫への参照 |
 | audit_logs | 操作者、操作名、対象、変更前後などのJSON |
 | suppliers | 発注データの仕入先と参照整合性の保持 |
 | purchase_orders / purchase_order_items | 発注残集計に使用する既存構造。注文ワークフローの画面は未実装 |
 
-業務・認証・監査の全13テーブルを保持します。廃止済みの `machines` / `supplier_items` と `tools.manufacturer` / `tools.model` / `inventory_transactions.machine_id` は監査へ退避して削除済みです。`tools.unit` は既存の数量・履歴の意味を維持する内部項目として保持します。
+業務・認証・監査の全14テーブルを保持します。廃止済みの `machines` / `supplier_items` と `tools.manufacturer` / `tools.model` / `inventory_transactions.machine_id` は監査へ退避して削除済みです。`tools.unit` は既存の数量・履歴の意味を維持する内部項目として保持します。
 
 新規工具には `@tool/<工具UUID>` の内部参照先を作成します。利用者の棚番は `tools.shelf_code` に保持し、棚番を変更しても在庫行・取引の参照先は変えません。
 
@@ -42,6 +43,8 @@
 `on_hand_after` は当該在庫参照先の取引直後の実在庫、`unit_price` は取引時点の単価です。取消では元取引の単価を引き継ぎます。未知の旧単価は現在値で補いません。旧残高は対応する監査記録で確認できる場合のみ読み取り時に補います。
 
 通常取引の再送キーは `phase4:<UUID>`、工具編集の在庫修正は `tool-edit:<UUID>`。初期在庫登録にも専用キーがあります。在庫、取引、監査は同じトランザクションで保存し、いずれかが失敗すれば全体を戻します。
+
+出庫時に工具全体の実在庫が発注ライン＋発注済みの未入荷数を下回る場合、`order_list_entries` も同じトランザクションで保存します。tool_idを一意にし、最新の掲載対象出庫を参照します。入庫・取消で自動削除せず、発注確定・「済」の処理は今後追加します。
 
 ## 主な監査イベント
 
@@ -54,6 +57,7 @@
 | TOOL_STOCK_UPDATED | 工具編集での在庫修正、変更前後と取引 |
 | TOOL_ORDER_QUANTITY_UPDATED | 発注候補数の変更前後 |
 | INVENTORY_MUTATION | 通常取引の要求フィンガープリントと確定結果 |
+| ORDER_LIST_UPDATED | 出庫条件を満たした工具と、最新の対象出庫への参照 |
 | LEGACY_SCHEMA_ARCHIVED | 削除前の旧設備・仕入条件・メーカー・型番・取引の設備参照 |
 
 工具変更履歴はこのうち工具変更に関するイベントから差分を生成します。監査表や取引表を表示件数に合わせて削除することはありません。
@@ -71,6 +75,7 @@
 | 20261107020000_history_snapshots | 取引直後の残高・単価と索引 |
 | 20261110000000_remove_unused_legacy | 旧項目の監査退避、単価移行、未使用2テーブル・3カラムの削除 |
 | 20261110150000_user_soft_delete | users.deleted_atを追加。物理削除せず履歴との関連を保持 |
+| 20261111010000_order_list | 出庫条件を満たす工具の発注リスト。既存出庫は遡及しない |
 
 既存の移行を書き換えず、変更は追加移行で管理します。PrismaスキーマだけからDBを作り直すとSQL専用のCHECK・部分索引・トリガーが欠けるため、既存移行を適用します。
 

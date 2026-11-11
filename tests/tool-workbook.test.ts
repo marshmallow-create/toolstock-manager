@@ -4,11 +4,47 @@ import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 import { createToolTemplate, parseToolWorkbook, IMPORT_HEADERS } from '../src/lib/masters/tool-workbook';
 
-async function workbook(rows: unknown[][]) {
- const book = new ExcelJS.Workbook(), sheet = book.addWorksheet('工具登録');
+async function workbook(rows: unknown[][], mode: 'create'|'update' = 'create') {
+ const book = new ExcelJS.Workbook(), sheet = book.addWorksheet(mode==='update'?'工具変更':'工具登録');
  sheet.addRow(IMPORT_HEADERS); for (const row of rows) sheet.addRow(row);
  return Buffer.from(await book.xlsx.writeBuffer());
 }
+
+test('登録と変更の単価は小数を表示せず入力した小数値を保持する',async()=>{
+ for(const mode of ['create','update'] as const){
+  const book=new ExcelJS.Workbook();await book.xlsx.load(await createToolTemplate(mode) as never);
+  const sheet=book.getWorksheet(mode==='update'?'工具変更':'工具登録')!;
+  assert.ok(sheet);
+  assert.equal(sheet.getCell('G2').numFmt,'0');
+  assert.equal(sheet.getCell('G201').numFmt,'0');
+  sheet.getCell('A2').value='A1';sheet.getCell('G2').value=125.55;
+  const rows=await parseToolWorkbook(Buffer.from(await book.xlsx.writeBuffer()),mode);
+  assert.equal(rows[0].values.unit_price,'125.55');
+ }
+});
+
+test('変更テンプレートは同じ9列でカテゴリーの空欄と変更手順を案内する',async()=>{
+ const book=new ExcelJS.Workbook();await book.xlsx.load(await createToolTemplate('update') as never);
+ const sheet=book.getWorksheet('工具変更')!;
+ assert.ok(sheet);assert.deepEqual((sheet.getRow(1).values as unknown[]).slice(1),IMPORT_HEADERS);
+ assert.equal(sheet.getCell('C2').dataValidation.allowBlank,true);
+ const instructions=book.getWorksheet('入力方法')!.getColumn(1).values.join('\n');
+ assert.match(instructions,/既存.*品目コード/);assert.match(instructions,/空欄.*変更しません/);
+ assert.match(instructions,/200/);assert.match(instructions,/2MB/);assert.match(instructions,/小数.*表示/);
+ await assert.rejects(parseToolWorkbook(await createToolTemplate('update'),'update'),/変更する行がありません/);
+});
+
+test('変更の解析は部分入力の空欄と数量0を区別して実際の行番号を保持する',async()=>{
+ const rows=await parseToolWorkbook(await workbook([['A1','','',0,'',0,'0.25','',''],[],['A2','新しい名前']],'update'),'update');
+ assert.equal(rows.length,2);assert.equal(rows[1].rowNumber,4);
+ assert.deepEqual(rows[0].values,{tool_code:'A1',name:'',category:'',on_hand:'0',reorder_point:'',order_quantity:'0',unit_price:'0.25',department:'',shelf_code:''});
+ assert.equal(rows[1].values.name,'新しい名前');assert.equal(rows[1].values.unit_price,'');
+});
+
+test('登録と変更で別モードのシートは受け付けない',async()=>{
+ await assert.rejects(parseToolWorkbook(await workbook([['A1']]),'update'),/「工具変更」シートがありません/);
+ await assert.rejects(parseToolWorkbook(await workbook([['A1']],'update')),/「工具登録」シートがありません/);
+});
 test('テンプレートは正しい列・候補・説明を含むxlsxで空なら登録しない',async()=>{
  const buffer=await createToolTemplate(), book=new ExcelJS.Workbook(); await book.xlsx.load(buffer as never);
  const values=book.worksheets[0].getRow(1).values; assert.ok(Array.isArray(values)); assert.deepEqual(values.slice(1),IMPORT_HEADERS);

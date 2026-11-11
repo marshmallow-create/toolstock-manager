@@ -8,6 +8,7 @@ import { MAX_IMPORT_ROWS, type ImportRow } from './tool-import';
 export const MAX_WORKBOOK_BYTES = 2 * 1024 * 1024;
 export const IMPORT_HEADERS = ['品目コード', '品目名', 'カテゴリー', '在庫', '発注ライン', '発注数', '単価', '部門', '棚番'];
 export const IMPORT_FIELDS = ['tool_code', 'name', 'category', 'on_hand', 'reorder_point', 'order_quantity', 'unit_price', 'department', 'shelf_code'];
+export type WorkbookMode = 'create'|'update';
 
 function checkXml(xml:string,worksheet:boolean) {
  const parser=new SaxesParser({xmlns:false});let rows=0,cells=0,sheets=0;
@@ -70,32 +71,45 @@ async function checkArchive(buffer: Buffer) {
  });
 }
 
-export async function createToolTemplate() {
- const book=new ExcelJS.Workbook(), sheet=book.addWorksheet('工具登録');
+export async function createToolTemplate(mode:WorkbookMode='create') {
+ const sheetName=mode==='update'?'工具変更':'工具登録';
+ const book=new ExcelJS.Workbook(), sheet=book.addWorksheet(sheetName);
  sheet.addRow(IMPORT_HEADERS); sheet.views=[{state:'frozen',ySplit:1}];
  sheet.columns=IMPORT_HEADERS.map((_,index)=>({width:index===1?30:18}));
  sheet.getRow(1).font={bold:true,color:{argb:'FFFFFFFF'}};
  sheet.getRow(1).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF285957'}};
  for(let row=2;row<=MAX_IMPORT_ROWS+1;row++){
   for(const column of ['A','B','C','H','I'])sheet.getCell(column+row).numFmt='@';
-  sheet.getCell('C'+row).dataValidation={type:'list',allowBlank:false,formulae:['"'+toolCategories.map(option=>option.label).join(',')+'"'],showErrorMessage:true,errorStyle:'stop',error:'カテゴリーは候補から選択してください。'};
+  sheet.getCell('C'+row).dataValidation={type:'list',allowBlank:mode==='update',formulae:['"'+toolCategories.map(option=>option.label).join(',')+'"'],showErrorMessage:true,errorStyle:'stop',error:'カテゴリーは候補から選択してください。'};
   sheet.getCell('H'+row).dataValidation={type:'list',allowBlank:true,formulae:['"'+toolDepartments.join(',')+'"'],showErrorMessage:true,errorStyle:'stop',error:'部門は候補から選択してください。'};
   for(const column of ['D','E','F'])sheet.getCell(column+row).dataValidation={type:'whole',operator:'between',allowBlank:true,formulae:[0,2147483647],showErrorMessage:true,errorStyle:'stop',error:'0以上の整数を入力してください。'};
-  sheet.getCell('G'+row).numFmt='0.00';
+  sheet.getCell('G'+row).numFmt='0';
  }
  const instructions=book.addWorksheet('入力方法');instructions.getColumn(1).width=105;
- for(const line of ['工具登録シートの2行目から入力してください。最大200件です。', '列の追加・削除・見出しの変更・セル結合・数式は使用できません。', '品目コード・品目名・カテゴリー・単価は必須です。在庫・発注ライン・発注数の空欄は0です。', 'カテゴリー：ドリル、エンドミル、タップ、リーマ、チップ', '部門：17314、17361、17362、17363。部門・棚番は空欄可。', '品目コードは半角英数字・ハイフン・アンダースコア32文字以内。先頭の0が必要な場合は文字列として入力してください。', '品目名・棚番は100文字以内。数量は0～2147483647の整数、単価は整数部12桁・小数部2桁以内。', '既存の品目コード・ファイル内の重複は登録できません。既存工具の更新には使用できません。', 'アップロードして確認した後、登録ボタンで確定します。エラーが1件でもあれば全件登録しません。'])instructions.addRow([line]);
+ for(const line of [
+  `${sheetName}シートの2行目から入力してください。最大200件、ファイルは2MB以下です。`,
+  '列の追加・削除・見出しの変更・セル結合・数式は使用できません。',
+  mode==='update'?'既存工具と一致する品目コードが必須です。他の項目は変更する値だけを入力してください。空欄の項目は変更しません。数量・単価の0は変更する値として扱います。':'品目コード・品目名・カテゴリー・単価は必須です。在庫・発注ライン・発注数の空欄は0です。',
+  'カテゴリー：ドリル、エンドミル、タップ、リーマ、チップ',
+  mode==='update'?'部門：17314、17361、17362、17363。部門・棚番の空欄は変更しません。空欄への変更はできません。':'部門：17314、17361、17362、17363。部門・棚番は空欄可。',
+  '品目コードは半角英数字・ハイフン・アンダースコア32文字以内。先頭の0が必要な場合は文字列として入力してください。',
+  '品目名・棚番は100文字以内。数量は0～2147483647の整数、単価は整数部12桁・小数部2桁以内。',
+  '単価の小数は表示しません。小数部2桁以内の値は入力でき、入力した小数値を保持して取り込みます。',
+  mode==='update'?'既存の品目コードで工具を特定して変更します。未登録の品目コード・ファイル内の重複は変更できません。':'既存の品目コード・ファイル内の重複は登録できません。既存工具の更新には使用できません。',
+  mode==='update'?'アップロードして確認した後、変更ボタンで確定します。エラーが1件でもあれば全件変更しません。':'アップロードして確認した後、登録ボタンで確定します。エラーが1件でもあれば全件登録しません。',
+ ])instructions.addRow([line]);
  return Buffer.from(await book.xlsx.writeBuffer());
 }
 
-export async function parseToolWorkbook(buffer:Buffer):Promise<ImportRow[]> {
+export async function parseToolWorkbook(buffer:Buffer,mode:WorkbookMode='create'):Promise<ImportRow[]> {
  if(buffer.length>MAX_WORKBOOK_BYTES)throw new AuthError(413,'ファイルは2MB以下にしてください。');
  await checkArchive(buffer);
  const book=new ExcelJS.Workbook();
  try{await book.xlsx.load(buffer as never,{ignoreNodes:['cols','dataValidations','conditionalFormatting','mergeCells','hyperlinks','drawing','extLst','rowBreaks','colBreaks','picture']});}
  catch{throw new AuthError(400,'Excelファイルを読み込めません。xlsx形式を確認してください。');}
- const sheet=book.getWorksheet('工具登録');
- if(!sheet)throw new AuthError(400,'「工具登録」シートがありません。テンプレートを使用してください。');
+ const sheetName=mode==='update'?'工具変更':'工具登録';
+ const sheet=book.getWorksheet(sheetName);
+ if(!sheet)throw new AuthError(400,`「${sheetName}」シートがありません。テンプレートを使用してください。`);
  const read=(cell:ExcelJS.Cell,row:number)=>{
   if(cell.value===null || cell.value===undefined)return '';
   if(typeof cell.value==='object')throw new AuthError(400,`${row}行目：数式や特殊な形式のセルは使用できません。値として入力してください。`);
@@ -112,8 +126,8 @@ export async function parseToolWorkbook(buffer:Buffer):Promise<ImportRow[]> {
   const values=Object.fromEntries(IMPORT_FIELDS.map((field,index)=>[field,read(row.getCell(index+1),rowNumber)]));
   if(Object.values(values).every(value=>value===''))return;
   rows.push({rowNumber,values});
-  if(rows.length>MAX_IMPORT_ROWS)throw new AuthError(400,'一度に登録できるのは200件までです。');
+  if(rows.length>MAX_IMPORT_ROWS)throw new AuthError(400,`一度に${mode==='update'?'変更':'登録'}できるのは200件までです。`);
  });
- if(!rows.length)throw new AuthError(400,'登録する行がありません。');
+ if(!rows.length)throw new AuthError(400,`${mode==='update'?'変更':'登録'}する行がありません。`);
  return rows;
 }

@@ -11,7 +11,7 @@ import { CategoryField } from '@/components/tool-option-fields';
 const inputClass = 'w-full rounded border border-slate-300 bg-white px-3 py-1.5 text-sm';
 export default async function History({ searchParams }: { searchParams: Promise<Search> }) {
  const actor = await pageUser('history:own'), search = await searchParams, token = await pageToken(), service = inventory();
- const options = await service.historyOptions(token), priceVisible = can(actor.role, 'masters:write');
+ const options = await service.historyOptions(token), priceVisible = can(actor.role, 'prices:read');
  let result: Awaited<ReturnType<typeof service.listHistory>> = { items: [], total: 0, page: 1, pageSize: 50 }, error = '';
  try { result = await service.listHistory(token, search); } catch (e) { if (e instanceof AuthError && [400, 403].includes(e.status)) error = e.message; else throw e; }
  const pageLink = (page: number) => { const q = new URLSearchParams(); for (const key of ['from', 'to', 'tool_id', 'tool_code', 'category', 'actor_user_id', 'type', 'movement', 'unit_price_min', 'unit_price_max']) if (queryText(search[key])) q.set(key, queryText(search[key])); q.set('page', String(page)); return '/history?' + q; };

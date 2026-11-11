@@ -76,7 +76,7 @@ test('8文字でユーザーを登録・ログイン・変更でき、不正な�
 
 test('2ロールの全操作が仕様の権限表と一致する',()=>{
   const expected = [
-    ['inventory:read','inventory:issue','inventory:receive','history:own','tools:create'],
+    ['inventory:read','inventory:issue','inventory:receive','history:own','history:all','prices:read','tools:create'],
     Object.keys(permissions),
   ];
   for(let i=0;i<roles.length;i++) for(const permission of Object.keys(permissions))

@@ -45,11 +45,13 @@ export async function createToolInTransaction(tx: Prisma.TransactionClient, acto
 }
 export async function updateTool(db: PrismaClient, auth: AuthService, token: string | undefined, id: string, input: Input) {
  await auth.authenticate(token, 'tools:update');
+ return conflict(() => auth.authorized(token, ['tools:update'], (tx, actor) => updateToolInTransaction(tx, actor, id, input)));
+}
+export async function updateToolInTransaction(tx: Prisma.TransactionClient, actor: Viewer, id: string, input: Input) {
  id = uuid(id); const policy = policyData(input, false);
  const quantity = input.on_hand === undefined ? undefined : integer(input.on_hand, '在庫');
  const expectedQuantity = input.expected_on_hand === undefined ? undefined : integer(input.expected_on_hand, '変更前の在庫');
  const orderQuantity = input.order_quantity === undefined ? undefined : integer(input.order_quantity, '発注数');
- return conflict(() => auth.authorized(token, ['tools:update'], async (tx, actor) => {
   await tx.$queryRaw`SELECT id FROM tools WHERE id=${id}::uuid FOR UPDATE`;
   const before = await tx.tool.findUnique({ where: { id } });
   if (!before) throw new AuthError(404, '工具が見つかりません');
@@ -92,6 +94,5 @@ export async function updateTool(db: PrismaClient, auth: AuthService, token: str
   }
   await tx.inventoryPolicy.upsert({ where: { tool_id: id }, create: { tool_id: id, ...policy }, update: policy });
   await audit(tx, actor.id, 'TOOL_UPDATED', 'tools', id, { before, after: tool, previousPolicy, policy });
-  return can(actor.role,'masters:write') ? tool : { ...tool, unit_price: null };
- }));
+  return can(actor.role,'prices:read') ? tool : { ...tool, unit_price: null };
 }

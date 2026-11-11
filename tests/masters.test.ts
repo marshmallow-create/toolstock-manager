@@ -4,6 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { databaseFixture } from './helpers/database';
 import { MastersService } from '../src/lib/masters/service';
 import { AuthError } from '../src/lib/auth/service';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { ToolForm } from '../src/components/masters';
 
 let fixture: Awaited<ReturnType<typeof databaseFixture>>;
 let service: MastersService;
@@ -16,7 +19,17 @@ const location = () => fixture.db.location.create({ data: { location_code: code(
 before(async () => { fixture = await databaseFixture('masters_test'); service = new MastersService(fixture.db); });
 after(async () => { await fixture?.close(); });
 
-test('工具変更履歴は対象工具の実際の変更と操作者を返し単価を保護する', async () => {
+test('工具フォームは整数単価の末尾.00だけを除き小数単価を丸めない', () => {
+ const tool = { tool_code: 'PRICE', name: '単価工具', category: 'DRILL', unit: '本', active: true, on_hand: 1, order_quantity: 0 };
+ const fresh = renderToStaticMarkup(createElement(ToolForm, { action: '/api/tools' }));
+ assert.match(fresh, /name="unit_price"[^>]*value="0"/);
+ for (const [price, expected] of [['1234.00', '1234'], ['1234.50', '1234.50'], ['1234.56', '1234.56'], [null, '0']] as const) {
+  const html = renderToStaticMarkup(createElement(ToolForm, { action: '/api/tools/id', tool: { ...tool, unit_price: price } }));
+  assert.ok(html.match(/name="unit_price"[^>]*value="([^"]*)"/)?.[1] === expected, String(price));
+ }
+});
+
+test('工具変更履歴は全ユーザーに変更内容・操作者・単価を返す', async () => {
  const input = { ...toolInput(), on_hand: 7, order_quantity: 3, unit_price: '123.45', shelf_code: 'A-01' };
  const tool = await service.createTool(fixture.tokens.ADMIN, input);
  assert.deepEqual(await service.toolChangeHistory(fixture.tokens.WORKER, tool.id), []);
@@ -24,15 +37,25 @@ test('工具変更履歴は対象工具の実際の変更と操作者を返し�
  const rows = await service.toolChangeHistory(fixture.tokens.ADMIN, tool.id);
  assert.ok(rows.length); assert.ok(rows.every(row => row.actor.employee_code === 'ADMIN'));
  const content = rows.flatMap(row => row.changes).join('\n');
- for (const value of ['品目名', '棚番：A-01 → B-02', '在庫：7 → 9', '発注数：3 → 5', '123.45', '234.56']) assert.ok(content.includes(value), value);
+ for (const value of ['品目名', '棚番：A-01 → B-02', '在庫：7 → 9', '発注数：3 → 5', '単価：123 → 235']) assert.ok(content.includes(value), value);
+ assert.doesNotMatch(content, /123\.45|234\.56/);
  assert.ok(rows.every((row, index) => index === 0 || rows[index - 1].created_at >= row.created_at));
  const worker = JSON.stringify(await service.toolChangeHistory(fixture.tokens.WORKER, tool.id));
- assert.ok(!worker.includes('123.45')); assert.ok(!worker.includes('234.56')); assert.ok(!worker.includes('password_hash'));
+ assert.ok(worker.includes('単価：123 → 235')); assert.ok(!worker.includes('password_hash'));
  const count = rows.length;
  await service.updateTool(fixture.tokens.ADMIN, tool.id, { ...input, active: true, name: '履歴テスト工具', shelf_code: 'B-02', on_hand: 9, order_quantity: 5, unit_price: '234.56' });
  assert.equal((await service.toolChangeHistory(fixture.tokens.ADMIN, tool.id)).length, count);
  const other = await createTool(); assert.deepEqual(await service.toolChangeHistory(fixture.tokens.ADMIN, other.id), []);
  await assert.rejects(service.toolChangeHistory(undefined, tool.id), status(401));
+});
+
+test('単価を整数表示しても小数部分だけの変更履歴と保存精度を保持する', async () => {
+ const input = { ...toolInput(), unit_price: '125.50' };
+ const tool = await service.createTool(fixture.tokens.ADMIN, input);
+ await service.updateTool(fixture.tokens.ADMIN, tool.id, { ...input, active: true, unit_price: '125.51' });
+ assert.deepEqual((await service.toolChangeHistory(fixture.tokens.ADMIN, tool.id)).map(row => row.changes), [['単価：126 → 126']]);
+ assert.equal((await service.toolDetail(fixture.tokens.ADMIN, tool.id)).unit_price, '125.51');
+ assert.deepEqual((await service.toolChangeHistory(fixture.tokens.WORKER, tool.id)).map(row => row.changes), [['単価：126 → 126']]);
 });
 
 test('工具変更履歴は編集した項目だけを表示し内部の方針補正を表示しない', async () => {
@@ -144,8 +167,8 @@ test('一覧ラベルの項目だけで工具・部門・単価・棚在庫を�
  assert.equal(transactions.length, 1); assert.equal(transactions[0].quantity, 17);
  assert.equal(transactions[0].actor_user_id, fixture.users.ADMIN);
  const worker = (await service.listTools(fixture.tokens.WORKER, { tool_code: tool.tool_code })).tools[0];
- assert.equal(worker.unit_price, null);
- assert.ok(!JSON.stringify(await service.toolDetail(fixture.tokens.WORKER, tool.id)).includes('321.50'));
+ assert.equal(worker.unit_price, '321.50');
+ assert.equal((await service.toolDetail(fixture.tokens.WORKER, tool.id)).unit_price,'321.50');
  for (const bad of [{ ...input, tool_code: code(), shelf_code: 'a'.repeat(101) }, { ...input, tool_code: code(), unit_price: '-1' }, { ...input, tool_code: code(), order_quantity: '-1' }]) {
   await assert.rejects(service.createTool(fixture.tokens.ADMIN, bad), status(400));
   assert.equal(await fixture.db.tool.count({ where: { tool_code: bad.tool_code } }), 0);
@@ -205,12 +228,12 @@ test('工具の品目コード・品目名のみを検索し、分類・状態�
  assert.equal((await service.listTools(fixture.tokens.ADMIN, { q: input.tool_code, status: 'inactive' })).total, 1);
 });
 
-test('移行後の工具単価を参照し、作業者には単価を公開しない',async()=>{
+test('移行後の工具単価を全ユーザーに公開する',async()=>{
  const tool=await service.createTool(fixture.tokens.ADMIN,{...toolInput(),unit_price:'25.50'});
  assert.equal((await service.listTools(fixture.tokens.ADMIN,{q:tool.tool_code})).tools[0].unit_price,'25.50');
  await fixture.db.tool.update({where:{id:tool.id},data:{unit_price:'12.25'}});assert.equal((await service.listTools(fixture.tokens.ADMIN,{q:tool.tool_code})).tools[0].unit_price,'12.25');
  for(const role of ['WORKER','ADMIN'])assert.ok(!('supplier_items' in await service.toolDetail(fixture.tokens[role],tool.id)));assert.ok(!('saveSupplierItem' in service));
- assert.equal((await service.listTools(fixture.tokens.WORKER,{q:tool.tool_code})).tools[0].unit_price,null);
+ assert.equal((await service.listTools(fixture.tokens.WORKER,{q:tool.tool_code})).tools[0].unit_price,'12.25');
 });
 
 test('一覧に棚番・発注点・発注残・候補数・優先単価を集計し単価の権限を守る', async () => {
@@ -232,7 +255,7 @@ test('一覧に棚番・発注点・発注残・候補数・優先単価を集�
  assert.equal(row.order_quantity, 8);
  assert.equal(row.unit_price, '1234.50');
  const worker = (await service.listTools(fixture.tokens.WORKER, { q: tool.tool_code })).tools[0];
- assert.equal(worker.unit_price, null);
+ assert.equal(worker.unit_price, '1234.50');
  const empty = await createTool();
  const emptyRow = (await service.listTools(fixture.tokens.ADMIN, { q: empty.tool_code })).tools[0];
  assert.deepEqual(emptyRow.shelf_codes, []);
@@ -336,7 +359,7 @@ test('作業者が初期在庫・発注数を含む工具登録を実行でき�
  const updated=await service.toolDetail(fixture.tokens.ADMIN,tool.id);
  assert.equal(updated.name,input.name);assert.equal(updated.on_hand,9);assert.equal(updated.order_quantity,4);assert.equal(updated.unit_price,unit_price);
  assert.equal(await fixture.db.auditLog.count({where:{entity_id:tool.id,action:'TOOL_UPDATED'}}),0);
- assert.ok(!('unit_price' in await service.toolDetail(fixture.tokens.WORKER, tool.id)));
+ assert.equal((await service.toolDetail(fixture.tokens.WORKER, tool.id)).unit_price,input.unit_price);
 });
 
 test('監査失敗時に残高と履歴もロールバックする', async () => {

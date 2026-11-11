@@ -5,6 +5,8 @@ import { resolve } from 'node:path';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const targets = {
+  orders: { entry: 'tests/order-list.test.ts', args: ['--test'] },
+  'orders-http': { entry: 'tests/order-list-http.test.ts', args: ['--test'] },
   'cleanup-migration': { entry: 'tests/cleanup-migration.test.ts', args: ['--test'] },
   'tool-import': { entry: 'tests/tool-import.test.ts', args: ['--test'] },
   'tool-workbook': { entry: 'tests/tool-workbook.test.ts', args: ['--test'] },
