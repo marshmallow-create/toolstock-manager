@@ -134,3 +134,54 @@ test('一覧は最新出庫日時・取引ID降順で50件ずつ返し巨大な�
  assert.equal(new Set([...first.items, ...second.items].map(row => row.id)).size, first.total);
  assert.deepEqual((await listOrders(f.db, f.auth, token(), { page: '999999999999' })).items, []);
 });
+
+test('箱発注を在庫単位で集計し部分入庫・再送・取消を一体管理する',async()=>{
+ const {registerOrder,cancelOrder}=await import('../src/lib/orders/write');
+ const s=await stock(20,30);
+ await masters.updateTool(token(),s.tool.id,{name:s.tool.name,category:s.tool.category,unit:s.tool.unit,active:true,reorder_point:30,order_unit:'箱',units_per_order:10,unit_price:'5000'});
+ await inventory.issue(token(),input(s));
+ const queued=await entry(s);assert.ok(queued);
+ const req={tool_id:s.tool.id,entry_id:queued.id,quantity:2,expected_units_per_order:10,request_key:randomUUID()};
+ await assert.rejects(registerOrder(f.db,f.auth,token('WORKER'),req),(e:unknown)=>e instanceof AuthError&&e.status===403);
+ const placed=await registerOrder(f.db,f.auth,token(),req);
+ assert.equal(placed.stock_quantity,20);assert.equal(await entry(s),null);
+ assert.equal((await masters.toolDetail(token(),s.tool.id)).on_order,20);
+ assert.deepEqual(await registerOrder(f.db,f.auth,token(),req),placed);
+ await assert.rejects(registerOrder(f.db,f.auth,token(),{...req,quantity:3}),(e:unknown)=>e instanceof AuthError&&e.status===409);
+ await masters.updateTool(token(),s.tool.id,{name:s.tool.name,category:s.tool.category,unit:s.tool.unit,active:true,reorder_point:30,units_per_order:3,unit_price:'1000'});
+ const receiptReq={...input(s),quantity_unit:'order',tool_order_id:placed.id};
+ const receipt=await inventory.receive(token('WORKER'),receiptReq);
+ assert.equal(receipt.quantity,10);assert.equal((await masters.toolDetail(token(),s.tool.id)).on_order,10);
+ assert.deepEqual(await inventory.receive(token('WORKER'),receiptReq),receipt);
+ const partial=await inventory.receive(token(),{...input(s,3),tool_order_id:placed.id});
+ assert.equal((await masters.toolDetail(token(),s.tool.id)).on_order,7);
+ await assert.rejects(inventory.receive(token(),{...input(s,8),tool_order_id:placed.id}),(e:unknown)=>e instanceof AuthError&&e.status===409);
+ const cancelReq={request_key:randomUUID()};
+ await cancelOrder(f.db,f.auth,token(),placed.id,cancelReq);
+ assert.equal((await masters.toolDetail(token(),s.tool.id)).on_order,0);
+ await inventory.reverse(token(),{transaction_id:partial.id,request_key:randomUUID()});
+ assert.equal((await masters.toolDetail(token(),s.tool.id)).on_order,3);
+ await cancelOrder(f.db,f.auth,token(),placed.id,cancelReq); // Replay must not cancel the reopened receipt.
+ assert.equal((await masters.toolDetail(token(),s.tool.id)).on_order,3);
+});
+
+test('紐付入庫の競合・監査失敗・誤工具では発注残と在庫を二重更新しない',async()=>{
+ const {registerOrder}=await import('../src/lib/orders/write');const s=await stock(5,30);await inventory.issue(token(),input(s));
+ const queued=await entry(s);assert.ok(queued);
+ const order=await registerOrder(f.db,f.auth,token(),{tool_id:s.tool.id,entry_id:queued.id,quantity:1,expected_units_per_order:1,request_key:randomUUID()});
+ const receipt={...input(s),tool_order_id:order.id};
+ const other=await stock();await assert.rejects(inventory.receive(token(),{...input(other),tool_order_id:order.id}),(e:unknown)=>e instanceof AuthError&&e.status===409);
+ const results=await Promise.allSettled([inventory.receive(token(),receipt),inventory.receive(token('WORKER'),{...receipt,request_key:randomUUID()})]);
+ assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal((await masters.toolDetail(token(),s.tool.id)).on_order,0);
+ const fulfilled=results.find(r=>r.status==='fulfilled');assert.ok(fulfilled?.status==='fulfilled');
+ await inventory.reverse(token(),{transaction_id:fulfilled.value.id,request_key:randomUUID()});
+ await f.admin.query("CREATE FUNCTION fail_linked_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='INVENTORY_MUTATION' THEN RAISE EXCEPTION 'test receipt rejection'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_linked_audit BEFORE INSERT ON audit_logs FOR EACH ROW EXECUTE FUNCTION fail_linked_audit()");
+ const before=await masters.toolDetail(token(),s.tool.id);
+ try{await assert.rejects(inventory.receive(token(),{...receipt,request_key:randomUUID()}));assert.equal((await masters.toolDetail(token(),s.tool.id)).on_hand,before.on_hand);assert.equal((await masters.toolDetail(token(),s.tool.id)).on_order,1);}finally{await f.admin.query('DROP TRIGGER reject_linked_audit ON audit_logs; DROP FUNCTION fail_linked_audit()');}
+});
+
+test('発注登録の工具ロック待ちは再試行可能な409を返す',async()=>{
+ const {registerOrder}=await import('../src/lib/orders/write');const s=await stock(5,30);await inventory.issue(token(),input(s));const queued=await entry(s);assert.ok(queued);
+ await f.admin.query('BEGIN');await f.admin.query('SELECT id FROM tools WHERE id=$1 FOR UPDATE',[s.tool.id]);
+ try{await assert.rejects(registerOrder(f.db,f.auth,token(),{tool_id:s.tool.id,entry_id:queued.id,quantity:1,expected_units_per_order:1,request_key:randomUUID()}),(e:unknown)=>e instanceof AuthError&&e.status===409);}finally{await f.admin.query('ROLLBACK');}
+});

@@ -4,14 +4,18 @@ import type { Operation, Input } from './types';
 export type Normalized = {
  operation:Operation; request_key:string; reason:string|null;
  tool_id?:string; location_id?:string; quantity?:number; machine_id?:string;
- transaction_id?:string;
+ transaction_id?:string; quantity_unit?:'order'; tool_order_id?:string; expected_units_per_order?:number;
 };
 export function mutationInput(operation:Operation,input:Input):Normalized {
  const request_key=uuid(input.request_key), reason=text(input.reason,'理由',500,true)||null;
  if(operation==='reverse')return {operation,request_key,reason,transaction_id:uuid(input.transaction_id)};
  const common={operation,request_key,reason,tool_id:uuid(input.tool_id),location_id:uuid(input.location_id)};
  if(operation==='receive'&&['order_id','order_item_id','purchase_order_id','purchase_order_item_id'].some(field=>Object.hasOwn(input,field)))throw new AuthError(400,'発注書にひも付く入荷は未対応です。入庫を利用してください');
- return {...common,quantity:integer(input.quantity,'数量',1),...(operation==='issue'&&input.machine_id!==undefined&&input.machine_id!==''?{machine_id:uuid(input.machine_id)}:{})};
+ const receipt=operation==='receive';
+ if(input.quantity_unit!==undefined&&input.quantity_unit!==''&&!['stock','order'].includes(input.quantity_unit as string))throw new AuthError(400,'数量の単位を確認してください');
+ if(!receipt&&(input.tool_order_id||input.quantity_unit==='order'))throw new AuthError(400,'発注との紐付けは入庫だけに指定できます');
+ const extra=receipt?{...(input.quantity_unit==='order'?{quantity_unit:'order' as const}:{}),...(input.tool_order_id?{tool_order_id:uuid(input.tool_order_id)}:{}),...(input.expected_units_per_order!==undefined&&input.expected_units_per_order!==''?{expected_units_per_order:integer(input.expected_units_per_order,'入数',1)}:{})}:{};
+ return {...common,...extra,quantity:integer(input.quantity,'数量',1),...(operation==='issue'&&input.machine_id!==undefined&&input.machine_id!==''?{machine_id:uuid(input.machine_id)}:{})};
 }
 export function fingerprint(input:Normalized) {
  return JSON.stringify(Object.keys(input).sort().map(key=>[key,input[key as keyof Normalized]]));

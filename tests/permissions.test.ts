@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { can } from '../src/lib/auth/permissions';
 
-const operations = ['inventory:read', 'inventory:issue', 'history:own', 'history:all', 'prices:read', 'inventory:receive', 'inventory:reverse', 'tools:create', 'tools:import', 'tools:update', 'masters:write', 'users:manage'];
+const operations = ['orders:manage', 'inventory:read', 'inventory:issue', 'history:own', 'history:all', 'prices:read', 'inventory:receive', 'inventory:reverse', 'tools:create', 'tools:import', 'tools:export', 'tools:update', 'masters:write', 'users:manage'];
 
 test('作業者も全員の入出庫履歴を参照できる', () => {
  for (const permission of operations) assert.equal(can('WORKER', permission), ['inventory:read', 'inventory:issue', 'inventory:receive', 'history:own', 'history:all', 'prices:read', 'tools:create'].includes(permission), permission);

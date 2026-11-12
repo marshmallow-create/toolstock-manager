@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Prisma, PrismaClient } from '../../generated/prisma/client';
 import { AuthService, AuthError, type Viewer } from '../auth/service';
+import { costSnapshot } from '../inventory/cost';
 import { can } from '../auth/permissions';
 import { uuid, code, integer, toolData, policyData, unchangedCode, type Input } from './validation';
 
@@ -37,7 +38,7 @@ export async function createToolInTransaction(tx: Prisma.TransactionClient, acto
    const location = await tx.location.create({ data: { location_code: '@tool/' + tool.id, name: '工具在庫' } });
    const stock = await tx.stockBalance.create({ data: { tool_id: tool.id, location_id: location.id, on_hand: quantity } });
    const key = 'tool-registration:' + tool.id;
-   if (quantity > 0) await tx.inventoryTransaction.create({ data: { tool_id: tool.id, location_id: location.id, actor_user_id: actor.id, type: 'RECEIVE', quantity, on_hand_after: quantity, unit_price: tool.unit_price, idempotency_key: key, reason: '工具登録時の初期在庫' } });
+   if (quantity > 0) await tx.inventoryTransaction.create({ data: { tool_id: tool.id, location_id: location.id, actor_user_id: actor.id, type: 'RECEIVE', quantity, on_hand_after: quantity, ...costSnapshot(tool,quantity), idempotency_key: key, reason: '工具登録時の初期在庫' } });
    await audit(tx, actor.id, 'INITIAL_STOCK_REGISTERED', 'stock_balances', key, { stock_balance_id: stock.id, tool_id: tool.id, location_id: location.id, quantity });
   }
   await audit(tx, actor.id, 'TOOL_CREATED', 'tools', tool.id, { after: data, policy });
@@ -80,7 +81,7 @@ export async function updateToolInTransaction(tx: Prisma.TransactionClient, acto
     if (after < stock.reserved || after < 0 || after > 2147483647) throw new AuthError(409, '引当数と変更後の在庫を確認してください');
     const changed = await tx.stockBalance.updateMany({ where: { id: stock.id, on_hand: stock.on_hand, reserved: stock.reserved }, data: { on_hand: after } });
     if (changed.count !== 1) throw new AuthError(409, '在庫が変更されています。画面を再読み込みして確認してください');
-    const transaction = await tx.inventoryTransaction.create({ data: { tool_id: id, location_id: stock.location_id, actor_user_id: actor.id, type: 'ADJUSTMENT', quantity: delta, on_hand_after: after, unit_price: tool.unit_price, idempotency_key: 'tool-edit:' + randomUUID(), reason: '工具情報変更による在庫修正' } });
+    const transaction = await tx.inventoryTransaction.create({ data: { tool_id: id, location_id: stock.location_id, actor_user_id: actor.id, type: 'ADJUSTMENT', quantity: delta, on_hand_after: after, ...costSnapshot(tool,delta), idempotency_key: 'tool-edit:' + randomUUID(), reason: '工具情報変更による在庫修正' } });
     await audit(tx, actor.id, 'TOOL_STOCK_UPDATED', 'inventory_transactions', transaction.id, { before: total, after: quantity, transaction });
    }
   }

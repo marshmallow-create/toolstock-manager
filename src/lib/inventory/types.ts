@@ -9,7 +9,7 @@ export type InventoryResult = {
 export type HistoryItem = {
  id:string; type:TransactionType; quantity:number; reason:string|null; created_at:Date;
  reverses_id:string|null; reversal_id:string|null;
- on_hand_after:number|null; unit_price?:string|null;
+ on_hand_after:number|null; unit_price?:string|null; amount?:string|null; stock_unit:string|null; cost_basis:string;
  tool:{id:string;tool_code:string;name:string;category:string;unit:string;active:boolean};
  location:{id:string;location_code:string;name:string;active:boolean};
  actor:{id:string;employee_code:string;name:string;active:boolean};

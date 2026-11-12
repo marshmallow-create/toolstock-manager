@@ -1,6 +1,7 @@
 export const roleLabels = { WORKER:'作業者', ADMIN:'管理者' } as const;
 export type Role = keyof typeof roleLabels;
 export const permissions: Record<string, readonly Role[]> = {
+ 'orders:manage':['ADMIN'],
  'inventory:read':['WORKER','ADMIN'],
  'inventory:issue':['WORKER','ADMIN'],
  'history:own':['WORKER','ADMIN'],
@@ -11,6 +12,7 @@ export const permissions: Record<string, readonly Role[]> = {
  'tools:create':['WORKER','ADMIN'],
  'tools:update':['ADMIN'],
  'tools:import':['ADMIN'],
+ 'tools:export':['ADMIN'],
  'masters:write':['ADMIN'],
  'users:manage':['ADMIN'],
 };

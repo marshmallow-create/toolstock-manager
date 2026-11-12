@@ -8,7 +8,7 @@ import type { ImportPreviewRow } from '@/lib/masters/tool-import';
 import { formatPrice } from '@/lib/format-price';
 
 type Preview={count:number;valid:boolean;previewToken?:string;rows:(ImportPreviewRow&{before?:Record<string,string>;changes?:string[]})[]};
-const columns=[['tool_code','品目コード'],['name','品目名'],['category','カテゴリー'],['on_hand','在庫'],['reorder_point','発注ライン'],['order_quantity','発注数'],['unit_price','単価'],['department','部門'],['shelf_code','棚番']];
+const columns=[['tool_code','品目コード'],['name','品目名'],['category','カテゴリー'],['on_hand','在庫'],['reorder_point','発注ライン'],['order_quantity','発注数'],['unit_price','単価'],['department','部門'],['shelf_code','棚番'],['unit','在庫単位'],['order_unit','発注単位'],['units_per_order','入数']];
 export function ToolImportForm() {
  const router=useRouter();
  const [mode,setMode]=useState<'create'|'update'>('create');

@@ -3,10 +3,13 @@ import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import ExcelJS from 'exceljs';
+import JSZip from 'jszip';
+import { parseToolWorkbook } from '../src/lib/masters/tool-workbook';
 import { databaseFixture } from './helpers/database';
 import { IMPORT_HEADERS } from '../src/lib/masters/tool-workbook';
 
 let fixture:Awaited<ReturnType<typeof databaseFixture>>,server:ChildProcess,origin:string,logs='';
+
 const request=(path:string,role?:string,options:RequestInit={})=>fetch(origin+path,{redirect:'manual',...options,headers:{...(role?{Cookie:'toolstock_session='+fixture.tokens[role]}:{}),...options.headers}});
 async function workbook(code:string,category='ドリル'){
  const book=new ExcelJS.Workbook(),sheet=book.addWorksheet('工具登録');sheet.addRow(IMPORT_HEADERS);sheet.addRow([code,'一括テスト工具',category,5,3,2,123.45,'17361','B-01']);
@@ -92,4 +95,54 @@ test('変更テンプレートとAPIで変更前後を確認し、空欄保持�
  await fixture.db.stockBalance.updateMany({where:{tool_id:tool.id},data:{on_hand:1}});
  assert.equal((await uploadUpdate(changed,'commit',current.previewToken)).status,409);
  assert.equal((await fixture.db.tool.findUniqueOrThrow({where:{id:tool.id}})).name,'一括変更後');
+});
+
+test('作業者はExcel出力APIを直接呼んでも拒否され一覧にダウンロードを表示しない',async()=>{
+ const denied=await request('/api/tools/export','WORKER');assert.equal(denied.status,403);
+ const zipDenied=await request('/api/tools/export?tool_code=ZIP-EXPORT-&page=2','WORKER');assert.equal(zipDenied.status,403);
+ const page=await request('/dashboard','WORKER');assert.equal(page.status,200);
+ const html=await page.text();assert.doesNotMatch(html,/Excelダウンロード|\/api\/tools\/export/);
+});
+
+test('工具一覧Excelは認可・検索条件を守り無変更と編集後の一括変更に使用できる',async()=>{
+ assert.equal((await request('/api/tools/export')).status,401);
+ const created=await request('/api/tools','ADMIN',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({tool_code:'000-EXPORT',name:'出力工具',category:'DRILL',on_hand:7,reorder_point:3,order_quantity:2,unit_price:'125.55',department:'17314',shelf_code:'001'})});
+ assert.equal(created.status,201,await created.clone().text());
+ for(const role of ['ADMIN']){
+  const file=await request('/api/tools/export?tool_code=000-export&name=出力&category=ドリル&page=999',role);
+  assert.equal(file.status,200);assert.equal(file.headers.get('cache-control'),'no-store');
+  assert.match(file.headers.get('content-disposition')??'',/attachment.*\.xlsx/);
+  const data=new Uint8Array(await file.arrayBuffer()),rows=await parseToolWorkbook(Buffer.from(data),'update');
+  assert.equal(rows.length,1);assert.equal(rows[0].values.tool_code,'000-EXPORT');assert.equal(rows[0].values.unit_price,'125.55');
+  const preview=await uploadUpdate(data,'preview','','ADMIN');assert.equal(preview.status,200);
+  const result=await preview.json();assert.equal(result.valid,true);assert.deepEqual(result.rows[0].changes,[]);
+  const unchanged=await uploadUpdate(data,'commit',result.previewToken);assert.equal(unchanged.status,200);assert.equal((await unchanged.json()).count,0);
+  assert.equal((await uploadUpdate(data,'preview','','WORKER')).status,403);
+  const html=await (await request('/dashboard?tool_code=000-export&name=出力&category=DRILL&page=1',role)).text();
+  const href=html.match(/href="([^\"]*\/api\/tools\/export[^\"]*)"/)?.[1];assert.ok(href);
+  const link=new URL(href.replaceAll('&amp;','&'),origin);
+  assert.equal(link.searchParams.get('tool_code'),'000-export');assert.equal(link.searchParams.get('name'),'出力');assert.equal(link.searchParams.has('page'),false);
+  if(role==='ADMIN'){
+   const book=new ExcelJS.Workbook();await book.xlsx.load(Buffer.from(data) as never);
+   book.getWorksheet('工具変更')!.getCell('B2').value='Excelで変更';
+   const edited=new Uint8Array(await book.xlsx.writeBuffer());
+   const next=await (await uploadUpdate(edited)).json();assert.equal(next.valid,true);assert.deepEqual(next.rows[0].changes,['name']);
+   assert.equal((await uploadUpdate(edited,'commit',next.previewToken)).status,200);
+   const tool=await fixture.db.tool.findUniqueOrThrow({where:{tool_code:'000-EXPORT'}});assert.equal(tool.name,'Excelで変更');assert.equal(tool.unit_price?.toString(),'125.55');
+  }
+ }
+ assert.equal((await request('/api/tools/export?category=不正','ADMIN')).status,400);
+ const empty=await request('/api/tools/export?tool_code=NO-EXPORT-RESULT','ADMIN');assert.equal(empty.status,200);
+ const book=new ExcelJS.Workbook();await book.xlsx.load(Buffer.from(await empty.arrayBuffer()) as never);assert.equal(book.getWorksheet('工具変更')!.getCell('A2').value,null);
+});
+
+test('検索結果201件のExcel出力は全ページを200件と1件のZIPに分割する',async()=>{
+ await fixture.db.tool.createMany({data:Array.from({length:201},(_,i)=>({tool_code:'ZIP-EXPORT-'+String(i).padStart(3,'0'),name:'分割出力',category:'DRILL',unit:'個'}))});
+ const response=await request('/api/tools/export?tool_code=ZIP-EXPORT-&page=2','ADMIN');
+ assert.equal(response.status,200);assert.equal(response.headers.get('content-type'),'application/zip');
+ const zip=await JSZip.loadAsync(await response.arrayBuffer());
+ const files=Object.keys(zip.files).sort();assert.equal(files.length,2);
+ const rows=await Promise.all(files.map(async name=>parseToolWorkbook(await zip.file(name)!.async('nodebuffer'),'update')));
+ assert.deepEqual(rows.map(part=>part.length),[200,1]);assert.equal(rows[0][0].values.tool_code,'ZIP-EXPORT-000');assert.equal(rows[1][0].values.tool_code,'ZIP-EXPORT-200');
+ await fixture.db.tool.deleteMany({where:{tool_code:{startsWith:'ZIP-EXPORT-'}}});
 });

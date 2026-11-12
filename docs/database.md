@@ -5,7 +5,7 @@
 ## 保存形式と制約
 
 - 主キーはUUID、日時はUTCのtimestamptz(3)、表示時はAsia/Tokyoへ変換します。
-- 数量はinteger、金額はDecimal(14,2)。浮動小数点で金額を保存しません。
+- 数量はinteger、仕入単価はDecimal(14,2)、在庫単価はDecimal(24,8)、取引金額はDecimal(24,2)。浮動小数点で金額を保存しません。
 - 工具コード・社員IDは一意。工具×保管場所の在庫行も一意です。
 - 実在庫は非負、0≦引当≦実在庫。単価は非負。安全在庫≦発注点≦目標在庫をDBでも確認します。
 - 取引数量は非ゼロ。入庫は正、出庫は負。ADJUSTMENTとREVERSALには理由が必要です。
@@ -27,12 +27,13 @@
 | inventory_policies | 工具全体の安全在庫・発注点・目標在庫 |
 | inventory_transactions | 増減数量、操作種別、操作者、取消元、理由、確定残高・単価 |
 | reorder_candidates | 発注候補数とOPEN / CONVERTED / DISMISSED状態 |
+| tool_orders | 外部発注の記録、発注時の単位・入数・仕入単価、換算数量・入庫済数量・取消済数量 |
 | order_list_entries | 工具ごとに一意の発注リスト掲載行と、最新の掲載対象出庫への参照 |
 | audit_logs | 操作者、操作名、対象、変更前後などのJSON |
 | suppliers | 発注データの仕入先と参照整合性の保持 |
 | purchase_orders / purchase_order_items | 発注残集計に使用する既存構造。注文ワークフローの画面は未実装 |
 
-業務・認証・監査の全14テーブルを保持します。廃止済みの `machines` / `supplier_items` と `tools.manufacturer` / `tools.model` / `inventory_transactions.machine_id` は監査へ退避して削除済みです。`tools.unit` は既存の数量・履歴の意味を維持する内部項目として保持します。
+業務・認証・監査の全15テーブルを保持します。廃止済みの `machines` / `supplier_items` と `tools.manufacturer` / `tools.model` / `inventory_transactions.machine_id` は監査へ退避して削除済みです。`tools.unit` は既存の数量・履歴の意味を維持する内部項目として保持します。
 
 新規工具には `@tool/<工具UUID>` の内部参照先を作成します。利用者の棚番は `tools.shelf_code` に保持し、棚番を変更しても在庫行・取引の参照先は変えません。
 
@@ -109,3 +110,26 @@ docker compose exec db psql -U toolstock -d toolstock_restore_test -c 'SELECT co
 ```
 
 この復元例は今回の整理では実行していません。バックアップファイルの検証と、DBを実際に復元して業務データを照合する検証は別です。
+
+
+## 発注単位・使用金額の追加移行
+
+20261112010000_order_units はtoolsにorder_unitとunits_per_orderを追加し、既存工具の発注単位=在庫単位、入数1で初期化します。価格と数量は変更しません。
+
+20261112020000_inventory_amounts は在庫単価の桁を拡張し、amount、purchase_unit_price、cost_units_per_order、stock_unit、cost_basisを追加します。旧履歴はLEGACYとして保存済み単価×数量で金額だけ補完し、計算元の入数は推測しません。取引テーブルのDDLロックを保持する一つのトランザクション内で専用の履歴保護トリガーだけを停止し、新列補完後に再有効化します。旧数量・日時・単価は保持し、失敗時は停止状態を含めロールバックします。新取引はMASTERで計算根拠を保存します。
+
+20261112030000_tool_orders は軽量なtool_ordersと、入庫履歴のtool_order_id・receipt_units_per_orderを追加します。換算数量=発注数量×入数、入庫済+取消済≦換算数量、各数量非負をCHECKで保護します。旧purchase_orders等は保持します。
+
+取引金額は増減と同符号です。月別使用金額の集計例（未知価格件数は別に返す）：
+
+```sql
+SELECT date_trunc('month', t.created_at AT TIME ZONE 'Asia/Tokyo') AS month,
+       sum(-t.amount) AS usage_amount,
+       count(*) FILTER (WHERE t.amount IS NULL) AS missing_amount_count
+FROM inventory_transactions t
+LEFT JOIN inventory_transactions original ON original.id = t.reverses_id
+WHERE t.type = 'ISSUE' OR (t.type = 'REVERSAL' AND original.type = 'ISSUE')
+GROUP BY 1 ORDER BY 1;
+```
+
+LEGACYの集計値には当時の入数不明という制約があるため、MASTERと区別して扱います。月別画面は今回実装しません。

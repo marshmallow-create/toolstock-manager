@@ -31,6 +31,8 @@ export function unchangedCode(input: Input, field: string, before: string) {
 }
 export function toolData(input: Input, creating: boolean, existingShelf = '') {
  return { name: text(input.name, '品目名', 100), category: categoryValue(input.category), unit: text(creating ? input.unit ?? '個' : input.unit, '単位', 16), active: creating && input.active === undefined ? true : boolean(input.active),
+  ...(creating || input.order_unit !== undefined ? {order_unit:text(input.order_unit ?? input.unit ?? '個','発注単位',16)} : {}),
+  ...(creating || input.units_per_order !== undefined ? {units_per_order:integer(input.units_per_order ?? 1,'入数',1)} : {}),
   ...(creating || input.department !== undefined ? { department: departmentValue(input.department) } : {}),
   ...(creating || input.shelf_code !== undefined ? { shelf_code: text(input.shelf_code, '棚番', Math.max(100, existingShelf.length), true) } : {}),
   ...(input.unit_price !== undefined ? { unit_price: price(input.unit_price) } : {}),

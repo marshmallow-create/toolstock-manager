@@ -1,12 +1,12 @@
 import type { PrismaClient, Prisma } from '../../generated/prisma/client';
 import { AuthService, AuthError, type Viewer } from '../auth/service';
 import { can } from '../auth/permissions';
-import { uuid, integer, price, text, categoryValue } from '../masters/validation';
+import { uuid, integer, text, categoryValue } from '../masters/validation';
 import { categoryAliases } from '../tool-options';
 import { calendarDate, optionalId } from './validation';
 import type { Input, HistoryItem, InventoryResult } from './types';
 const transactionSelect={
- id:true,type:true,quantity:true,reason:true,created_at:true,reverses_id:true,idempotency_key:true,on_hand_after:true,unit_price:true,
+ id:true,type:true,quantity:true,reason:true,created_at:true,reverses_id:true,idempotency_key:true,on_hand_after:true,unit_price:true,amount:true,stock_unit:true,cost_basis:true,
  tool_id_record:{select:{id:true,tool_code:true,name:true,category:true,unit:true,active:true}},
  location_id_record:{select:{id:true,location_code:true,name:true,active:true}},
  actor_user_id_record:{select:{id:true,employee_code:true,name:true,active:true}},
@@ -22,10 +22,10 @@ async function dtos(db:PrismaClient,rows:Row[],visiblePrice:boolean):Promise<His
  ]},select:{entity_id:true,details:true}}):[];
  const audits=new Map(logs.map(log=>[log.entity_id,log.details as unknown as {result?:{on_hand_after?:unknown};quantity?:unknown}]));
  return rows.map(row=>{
-  const {tool_id_record:tool,location_id_record:location,actor_user_id_record:actor,inventory_transactions_reverses_id_children:reversal,idempotency_key,unit_price,on_hand_after,...fields}=row;
+  const {tool_id_record:tool,location_id_record:location,actor_user_id_record:actor,inventory_transactions_reverses_id_children:reversal,idempotency_key,unit_price,amount,on_hand_after,...fields}=row;
   const previous=audits.get(row.id)?.result?.on_hand_after??audits.get(idempotency_key)?.quantity;
   const recorded=typeof previous==='number'&&Number.isInteger(previous)&&previous>=0&&previous<=2147483647?previous:null;
-  return {...fields,tool,location,actor,reversal_id:reversal?.id??null,on_hand_after:on_hand_after??recorded,...(visiblePrice?{unit_price:unit_price?.toFixed(2)??null}:{})};
+  return {...fields,tool,location,actor,reversal_id:reversal?.id??null,on_hand_after:on_hand_after??recorded,...(visiblePrice?{unit_price:unit_price?.toFixed(Math.max(2,unit_price.decimalPlaces()))??null,amount:amount?.toFixed(2)??null}:{})};
  });
 }
 function scope(actor:Viewer):Prisma.InventoryTransactionWhereInput {
@@ -33,9 +33,10 @@ function scope(actor:Viewer):Prisma.InventoryTransactionWhereInput {
 }
 function priceBound(value:unknown):string|undefined {
  if(value===undefined||value==='')return undefined;
- return price(typeof value==='string'?value.trim():value);
+ if(typeof value!=='string'||!/^\d{1,12}(?:\.\d{1,8})?$/.test(value.trim()))throw new AuthError(400,'履歴単価は整数部12桁、小数部8桁以内で入力してください');
+ return value.trim();
 }
-function cents(value:string){const [whole,fraction='']=value.split('.');return BigInt(whole)*100n+BigInt(fraction.padEnd(2,'0'));}
+function cents(value:string){const [whole,fraction='']=value.split('.');return BigInt(whole)*100000000n+BigInt(fraction.padEnd(8,'0'));}
 export async function listHistory(db:PrismaClient,auth:AuthService,token:string|undefined,query:Input={}){
  const actor=await auth.authenticate(token,'history:own'),tool_id=optionalId(query.tool_id),actor_user_id=optionalId(query.actor_user_id);
  const toolCode=text(query.tool_code ?? '', '品目コード', 100, true), category=categoryValue(query.category, true);

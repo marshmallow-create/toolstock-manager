@@ -26,7 +26,7 @@ export async function toolChangeHistory(db: PrismaClient, auth: AuthService, tok
   if (log.action === 'TOOL_UPDATED') {
    const before = record(detail.before), after = record(detail.after);
    // Show changes to the tool-edit fields; full internal changes remain in the audit log.
-   const fields = [['name', '品目名'], ['category', 'カテゴリー'], ['department', '部門'], ['shelf_code', '棚番'], ['active', '状態'], ['unit_price', '単価']];
+   const fields = [['order_unit','発注単位'], ['units_per_order','入数'], ['name', '品目名'], ['category', 'カテゴリー'], ['department', '部門'], ['shelf_code', '棚番'], ['active', '状態'], ['unit_price', '単価']];
    for (const [field, label] of fields) {
     const format = (value: unknown) => field === 'category' ? categoryLabel(String(value ?? '')) : field === 'active' ? value === true ? '有効' : '無効' : field === 'unit_price' && value !== null && value !== undefined && value !== '' ? formatPrice(String(value)) : display(value);
     if (field === 'unit_price' ? comparablePrice(before[field]) === comparablePrice(after[field]) : format(before[field]) === format(after[field])) continue;

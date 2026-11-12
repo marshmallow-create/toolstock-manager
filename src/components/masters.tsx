@@ -17,17 +17,20 @@ export function NumberField(props: ComponentProps<'input'> & { label: string }) 
 export function Active({ value = true }: { value?: boolean }) {
  return <label className="grid gap-1">状態<select name="active" defaultValue={String(value)} className={inputClass}><option value="true">有効</option><option value="false">無効</option></select></label>;
 }
-type ToolValues = { tool_code: string; name: string; category: string; unit: string; active: boolean; on_hand: number; order_quantity: number; department?: string; shelf_code?: string; unit_price?: string | null; policy?: { safety_stock: number; reorder_point: number; target_stock: number } | null };
+type ToolValues = { tool_code: string; name: string; category: string; unit: string; order_unit?:string; units_per_order?:number; active: boolean; on_hand: number; order_quantity: number; department?: string; shelf_code?: string; unit_price?: string | null; policy?: { safety_stock: number; reorder_point: number; target_stock: number } | null };
 export function ToolForm({ action, tool }: { action: string; tool?: ToolValues }) {
  const formClass = 'grid max-w-3xl gap-3 sm:grid-cols-2 ' + panelClass;
  if (!tool) return <form action={action} method="post" className={formClass}>
   <Field label="品目コード" name="tool_code" required maxLength={32} pattern="[A-Za-z0-9_\x2D]+" />
   <Field label="品目名" name="name" required maxLength={100} />
   <CategoryField required />
+  <Field label="在庫単位" name="unit" defaultValue="個" maxLength={16} required />
+  <Field label="発注単位" name="order_unit" defaultValue="個" maxLength={16} required />
+  <NumberField label="入数（1発注単位あたり）" name="units_per_order" min={1} defaultValue={1} />
   <NumberField label="在庫" name="on_hand" defaultValue={0} />
   <NumberField label="発注ライン" name="reorder_point" defaultValue={0} />
   <NumberField label="発注数" name="order_quantity" defaultValue={0} />
-  <Field label="単価" name="unit_price" required inputMode="decimal" pattern="[0-9]{1,12}(\.[0-9]{1,2})?" maxLength={15} defaultValue="0" />
+  <Field label="仕入単価（発注単位あたり）" name="unit_price" required inputMode="decimal" pattern="[0-9]{1,12}(\.[0-9]{1,2})?" maxLength={15} defaultValue="0" />
   <DepartmentField />
   <Field label="棚番" name="shelf_code" maxLength={100} />
   <label className="grid gap-1">発注済み<output className="rounded border border-slate-200 bg-slate-50 px-3 py-1.5 text-slate-600" title="発注データから自動集計します">0</output></label>
@@ -42,8 +45,10 @@ export function ToolForm({ action, tool }: { action: string; tool?: ToolValues }
   <NumberField label="発注ライン" name="reorder_point" defaultValue={tool.policy?.reorder_point ?? 0} />
   <NumberField label="発注数" name="order_quantity" defaultValue={tool.order_quantity} />
   <input type="hidden" name="expected_on_hand" value={tool.on_hand} />
-  <input type="hidden" name="unit" value={tool.unit} />
-  {tool.unit_price !== undefined && <Field label="単価" name="unit_price" required inputMode="decimal" pattern="[0-9]{1,12}(\.[0-9]{1,2})?" maxLength={15} defaultValue={tool.unit_price?.replace(/\.0+$/, '') ?? '0'} />}
+  <Field label="在庫単位" name="unit" defaultValue={tool.unit} maxLength={16} required readOnly />
+  <Field label="発注単位" name="order_unit" defaultValue={tool.order_unit??tool.unit} maxLength={16} required />
+  <NumberField label="入数（1発注単位あたり）" name="units_per_order" min={1} defaultValue={tool.units_per_order??1} />
+  {tool.unit_price !== undefined && <Field label="仕入単価（発注単位あたり）" name="unit_price" required inputMode="decimal" pattern="[0-9]{1,12}(\.[0-9]{1,2})?" maxLength={15} defaultValue={tool.unit_price?.replace(/\.0+$/, '') ?? '0'} />}
   <DepartmentField value={tool.department} />
   <Field label="棚番" name="shelf_code" maxLength={Math.max(100, tool.shelf_code?.length ?? 0)} defaultValue={tool.shelf_code ?? ''} />
   <Active value={tool?.active} />

@@ -181,7 +181,7 @@ test('新規登録画面の一覧と同じ項目から登録しカテゴリー�
  const list = await request('/dashboard?tool_code=LIST-FORM', 'ADMIN');
  const listHtml = await list.text();
  for (const value of ['一覧形式の工具', '17362', 'SHELF-FORM', '¥457']) assert.ok(listHtml.includes(value));
- assert.match(listHtml, /<td\b[^>]*>¥457<\/td>/);
+ assert.match(listHtml, /<td\b[^>]*>¥457<small\b/);
  assert.doesNotMatch(listHtml, /¥456\.78/);
  const worker = await request('/api/tools?tool_code=LIST-FORM', 'WORKER');
  assert.equal((await worker.json()).tools[0].unit_price, '456.78');

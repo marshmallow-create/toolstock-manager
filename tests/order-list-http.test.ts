@@ -30,7 +30,7 @@ test('発注リストは認証が必要でメニューは入出庫履歴の直�
  assert.equal((await request('/api/orders?page=bad','ADMIN')).status,400);
 });
 
-test('出庫後の厳密な境界判定と最新出庫の操作者、全ユーザーへの単価、空の発注列を表示する',async()=>{
+test('出庫後の厳密な境界判定と最新出庫の操作者、全ユーザーへの単価、管理者の発注登録欄を表示する',async()=>{
  assert.equal((await issue(5)).status,200);assert.equal((await (await request('/api/orders','ADMIN')).json()).total,0);
  const key=randomUUID(),first=await issue(1,'WORKER',key);assert.equal(first.status,200);const source=(await first.json()).transaction;
  assert.equal((await issue(1,'WORKER',key)).status,200);
@@ -40,7 +40,29 @@ test('出庫後の厳密な境界判定と最新出庫の操作者、全ユー�
   assert.equal(data.items.length,1);assert.equal(data.items[0].tool.department,'17314');assert.equal(data.items[0].unit_price,'1350.50');
   const html=await (await request('/orders',role)).text();
   assert.deepEqual([...html.matchAll(/<th\b[^>]*>(.*?)<\/th>/gs)].map(m=>m[1]),['日時','品目コード','品目名','カテゴリー','発注数','操作者','単価','部門','発注']);
-  const cells=[...html.matchAll(/<td\b[^>]*>(.*?)<\/td>/gs)].map(m=>m[1]);assert.equal(cells.length,9);assert.equal(cells[8],'');assert.equal(cells[6],'¥1,351');assert.ok(!html.includes('1350.50'));
+  const cells=[...html.matchAll(/<td\b[^>]*>(.*?)<\/td>/gs)].map(m=>m[1]);assert.equal(cells.length,9);if(role==='ADMIN')assert.match(cells[8],/発注済みに登録/);else assert.equal(cells[8],'');assert.equal(cells[6],'¥1,351');assert.ok(!html.includes('1350.50'));
  }
  assert.equal((await issue(1,'ADMIN')).status,200);const latest=await (await request('/api/orders','ADMIN')).json();assert.equal(latest.total,1);assert.equal(latest.items[0].actor.employee_code,'ADMIN');
+});
+
+test('発注APIは認証・権限・Originを確認し箱発注から入出庫金額まで保持する',async()=>{
+ const post=(path:string,role:string|undefined,body:unknown,from=origin)=>request(path,role,{method:'POST',headers:{Origin:from,'Content-Type':'application/json'},body:JSON.stringify(body)});
+ const service=new MastersService(fixture.db);
+ await service.updateTool(fixture.tokens.ADMIN,toolId,{name:'発注対象ドリル',category:'DRILL',unit:'個',active:true,reorder_point:5,order_unit:'箱',units_per_order:10,unit_price:'5000'});
+ const entries=await (await request('/api/orders','ADMIN')).json();
+ const payload={tool_id:toolId,entry_id:entries.items[0].id,quantity:2,expected_units_per_order:10,request_key:randomUUID()};
+ assert.equal((await post('/api/orders',undefined,payload)).status,401);
+ assert.equal((await post('/api/orders','WORKER',payload)).status,403);
+ assert.equal((await post('/api/orders','ADMIN',payload,'https://evil.invalid')).status,403);
+ const created=await post('/api/orders','ADMIN',payload);assert.equal(created.status,200);const order=(await created.json()).order;
+ assert.equal(order.stock_quantity,20);assert.equal((await post('/api/orders','ADMIN',payload)).status,200);
+ const page=await (await request('/tools/'+toolId,'WORKER')).text();assert.match(page,/発注済み・未入庫/);assert.match(page,/name="tool_order_id"/);
+ const receipt=await post('/api/inventory/receive','WORKER',{tool_id:toolId,location_id:locationId,quantity:1,quantity_unit:'order',tool_order_id:order.id,request_key:randomUUID()});
+ assert.equal(receipt.status,200);assert.equal((await receipt.json()).transaction.quantity,10);
+ const out=await issue(3);assert.equal(out.status,200);const id=(await out.json()).transaction.id;
+ const history=(await (await request('/api/history/'+id,'WORKER')).json()).transaction;assert.equal(history.unit_price,'500.00');assert.equal(history.amount,'-1500.00');
+ assert.equal((await service.toolDetail(fixture.tokens.ADMIN,toolId)).on_order,10);
+ assert.equal((await post('/api/orders/'+order.id+'/cancel','WORKER',{request_key:randomUUID()})).status,403);
+ const cancelled=await post('/api/orders/'+order.id+'/cancel','ADMIN',{request_key:randomUUID()});assert.equal(cancelled.status,200);
+ assert.equal((await service.toolDetail(fixture.tokens.ADMIN,toolId)).on_order,0);
 });

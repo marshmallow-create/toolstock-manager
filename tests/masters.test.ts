@@ -16,8 +16,34 @@ const status = (n: number) => (e: unknown) => e instanceof AuthError && e.status
 const toolInput = () => ({ tool_code: code(), name: '架空ドリル', category: 'DRILL', unit: '本', safety_stock: 2, reorder_point: 5, target_stock: 10 });
 const createTool = () => service.createTool(fixture.tokens.ADMIN_ALT, toolInput());
 const location = () => fixture.db.location.create({ data: { location_code: code(), name: '架空棚' } });
+test('発注単位と入数を登録し省略更新で保持する', async () => {
+ const input={...toolInput(),unit:'個',order_unit:'箱',units_per_order:10,unit_price:'5000',on_hand:20};
+ const tool=await service.createTool(fixture.tokens.ADMIN,input);
+ assert.equal(tool.order_unit,'箱');assert.equal(tool.units_per_order,10);
+ await service.updateTool(fixture.tokens.ADMIN,tool.id,{name:tool.name,category:tool.category,unit:'個',active:true,reorder_point:5,unit_price:'6000'});
+ const saved=await service.toolDetail(fixture.tokens.ADMIN,tool.id);
+ assert.equal(saved.units_per_order,10);assert.equal(saved.stock_unit_price,'600.00000000');
+ for(const pack of [0,-1,1.5,2147483648])await assert.rejects(service.createTool(fixture.tokens.ADMIN,{...input,tool_code:code(),units_per_order:pack}),status(400));
+});
 before(async () => { fixture = await databaseFixture('masters_test'); service = new MastersService(fixture.db); });
 after(async () => { await fixture?.close(); });
+
+test('Excel出力は検索結果全ページをコード順に返し認可と有効状態を維持する',async()=>{
+ assert.equal(typeof service.exportTools,'function');
+ await fixture.db.tool.createMany({data:Array.from({length:55},(_,i)=>({tool_code:'EXPORT-'+String(i).padStart(3,'0'),name:'出力検索',category:'DRILL',unit:'個',active:i!==54,unit_price:'125.55'}))});
+ await fixture.db.tool.create({data:{tool_code:'EXPORT-OTHER',name:'別の工具',category:'TAP',unit:'個'}});
+ const query={tool_code:'export-',name:'出力',category:'ドリル',q:'検索',page:'999'};
+ await assert.rejects(service.exportTools(fixture.tokens.WORKER,query),status(403));
+ for(const role of ['ADMIN']) {
+  const tools=await service.exportTools(fixture.tokens[role],query);
+  assert.equal(tools.length,54);assert.equal(tools[0].tool_code,'EXPORT-000');assert.equal(tools[53].tool_code,'EXPORT-053');
+  assert.equal(tools[0].unit_price,'125.55');assert.equal(tools[0].on_hand,0);assert.equal(tools[0].reorder_point,0);
+ }
+ assert.deepEqual(await service.exportTools(fixture.tokens.ADMIN,{name:'一致しない'}),[]);
+ await assert.rejects(service.exportTools(undefined,query),status(401));
+ await assert.rejects(service.exportTools(fixture.tokens.ADMIN,{category:'不正'}),status(400));
+ await fixture.db.tool.deleteMany({where:{tool_code:{startsWith:'EXPORT-'}}});
+});
 
 test('工具フォームは整数単価の末尾.00だけを除き小数単価を丸めない', () => {
  const tool = { tool_code: 'PRICE', name: '単価工具', category: 'DRILL', unit: '本', active: true, on_hand: 1, order_quantity: 0 };

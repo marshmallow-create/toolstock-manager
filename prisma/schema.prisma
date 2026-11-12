@@ -33,6 +33,7 @@ enum CandidateStatus {
  DISMISSED
 }
 model User {
+ tool_orders ToolOrder[]
  deleted_at DateTime? @db.Timestamptz(3)
  password_hash String?
  sessions Session[]
@@ -50,6 +51,7 @@ model User {
  @@map("users")
 }
 model Tool {
+ tool_orders ToolOrder[]
  id String @id @default(uuid()) @db.Uuid
  tool_code String @unique
  name String
@@ -58,6 +60,8 @@ model Tool {
  unit_price Decimal? @db.Decimal(14, 2)
  category String
  unit String
+ order_unit String @default("個")
+ units_per_order Int @default(1)
  active Boolean @default(true)
  created_at DateTime @default(now()) @db.Timestamptz(3)
  updated_at DateTime @updatedAt @db.Timestamptz(3)
@@ -94,6 +98,14 @@ model StockBalance {
  @@map("stock_balances")
 }
 model InventoryTransaction {
+ amount Decimal? @db.Decimal(24, 2)
+ purchase_unit_price Decimal? @db.Decimal(14, 2)
+ cost_units_per_order Int?
+ stock_unit String?
+ cost_basis String @default("LEGACY")
+ tool_order_id String? @db.Uuid
+ receipt_units_per_order Int?
+ tool_order ToolOrder? @relation(fields: [tool_order_id], references: [id], onDelete: Restrict)
  id String @id @default(uuid()) @db.Uuid
  tool_id String @db.Uuid
  location_id String @db.Uuid
@@ -101,7 +113,7 @@ model InventoryTransaction {
  type TransactionType
  quantity Int
  on_hand_after Int?
- unit_price Decimal? @db.Decimal(14, 2)
+ unit_price Decimal? @db.Decimal(24, 8)
  idempotency_key String @unique
  reverses_id String? @db.Uuid @unique
  reason String?
@@ -224,4 +236,25 @@ model LoginAttempt {
  attempts Int
  started_at DateTime @db.Timestamptz(3)
  @@map("login_attempts")
+}
+
+model ToolOrder {
+ id String @id @default(uuid()) @db.Uuid
+ tool_id String @db.Uuid
+ created_by String @db.Uuid
+ request_key String @unique
+ order_quantity Int
+ order_unit String
+ units_per_order Int
+ stock_quantity Int
+ received_quantity Int @default(0)
+ cancelled_quantity Int @default(0)
+ purchase_unit_price Decimal? @db.Decimal(14, 2)
+ created_at DateTime @default(now()) @db.Timestamptz(3)
+ updated_at DateTime @updatedAt @db.Timestamptz(3)
+ tool Tool @relation(fields: [tool_id], references: [id], onDelete: Restrict)
+ actor User @relation(fields: [created_by], references: [id], onDelete: Restrict)
+ receipts InventoryTransaction[]
+ @@index([tool_id, created_at])
+ @@map("tool_orders")
 }

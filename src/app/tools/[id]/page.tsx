@@ -26,11 +26,12 @@ export default async function ToolDetail({ params, searchParams }: { params: Pro
     return <section key={mode} id={'inventory-' + mode} aria-labelledby={'inventory-title-' + mode} className={'min-w-0 ' + panelClass}>
      <h2 id={'inventory-title-' + mode} className="mb-2 text-xl font-bold">{label}</h2>
      <div>{!tool.active ? <p>無効な工具には登録できません。</p> : !stock ? <p>入出庫する棚を特定できません。工具情報の棚番と在庫を確認してください。</p> :
-      <InventoryForm key={tool.id + mode} mode={mode} tool={{ id: tool.id, unit: tool.unit }} stock={{ location_id: stock.location_id, on_hand: stock.on_hand, reserved: stock.reserved }} requestKey={randomUUID()} />
+      <InventoryForm key={tool.id + mode} mode={mode} orders={tool.orders.map(order=>({id:order.id,order_unit:order.order_unit,units_per_order:order.units_per_order,remaining:order.stock_quantity-order.received_quantity-order.cancelled_quantity,label:inventoryTime(order.created_at)+' / '+order.order_quantity+order.order_unit}))} tool={{ id: tool.id, unit: tool.unit,order_unit:tool.order_unit,units_per_order:tool.units_per_order }} stock={{ location_id: stock.location_id, on_hand: stock.on_hand, reserved: stock.reserved }} requestKey={randomUUID()} />
      }</div>
     </section>;
    })}
   </section>
+  {tool.orders.length>0&&<section className={'mb-3 '+panelClass} aria-labelledby="pending-orders"><h2 id="pending-orders" className="mb-2 text-xl font-bold">発注済み・未入庫</h2><ul className="space-y-3">{tool.orders.map(order=><li key={order.id} className="flex flex-wrap items-center gap-3"><span>{inventoryTime(order.created_at)}：{order.order_quantity} {order.order_unit}（1{order.order_unit}={order.units_per_order}{tool.unit}）、未入庫 {order.stock_quantity-order.received_quantity-order.cancelled_quantity} {tool.unit}</span>{can(actor.role,'orders:manage')&&<form action={'/api/orders/'+order.id+'/cancel'} method="post"><input type="hidden" name="request_key" value={randomUUID()}/><button className="ui-secondary">未入庫分を発注取消</button></form>}</li>)}</ul></section>}
   <section aria-labelledby="tool-information" className={'mb-3 ' + panelClass}>
    <h2 id="tool-information" className="mb-3 text-xl font-bold">工具情報</h2>
    <ToolStockTable tools={[{ ...tool, reorder_point: tool.policy?.reorder_point ?? null }]} />

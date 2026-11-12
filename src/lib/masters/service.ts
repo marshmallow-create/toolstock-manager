@@ -10,6 +10,7 @@ export class MastersService {
  private auth: AuthService;
  constructor(private db: PrismaClient) { this.auth = new AuthService(db); }
  listTools(token: string | undefined, query: Input = {}) { return read.listTools(this.db, this.auth, token, query); }
+ exportTools(token: string | undefined, query: Input = {}) { return read.exportTools(this.db, this.auth, token, query); }
  toolDetail(token: string | undefined, id: string) { return read.toolDetail(this.db, this.auth, token, id); }
  toolChangeHistory(token: string | undefined, id: string) { return toolChangeHistory(this.db, this.auth, token, id); }
  createTool(token: string | undefined, input: Input) { return write.createTool(this.db, this.auth, token, input); }

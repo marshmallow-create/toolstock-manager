@@ -1,16 +1,10 @@
+import { translateError } from './errors';
 import type { PrismaClient, TransactionType } from '../../generated/prisma/client';
 import { AuthService, AuthError } from '../auth/service';
 import { audit } from '../masters/write';
+import { costSnapshot, stockQuantity } from './cost';
 import { mutationInput, fingerprint } from './validation';
 import { operationPermissions, type Operation, type Input, type InventoryResult } from './types';
-function translateError(error:unknown):never {
- if(error instanceof AuthError)throw error;
- const e=error as {code?:string;meta?:{code?:string;driverAdapterError?:{cause?:{originalCode?:string}}}};
- const codes=[e?.code,e?.meta?.code,e?.meta?.driverAdapterError?.cause?.originalCode];
- if(codes.some(code=>['55P03','40P01','57014','P2028','P2034'].includes(code??'')))throw new AuthError(409,'別の操作を処理中です。在庫を再確認して同じリクエストキーで再試行してください');
- if(e?.code==='P2002')throw new AuthError(409,'この操作は登録済みです。履歴を確認してください');
- throw error;
-}
 export async function mutateInventory(db:PrismaClient,auth:AuthService,token:string|undefined,operation:Operation,input:Input):Promise<InventoryResult> {
  const permissions=operationPermissions[operation];
  await auth.authenticate(token,permissions[0]);
@@ -41,10 +35,21 @@ export async function mutateInventory(db:PrismaClient,auth:AuthService,token:str
    const stock=await tx.stockBalance.findUnique({where:{tool_id_location_id:{tool_id:toolId,location_id:locationId}}});
    if(!stock&&operation!=='receive')throw new AuthError(409,'保管場所の在庫が未登録です。初期在庫登録・入庫を確認してください');
    const before=stock?.on_hand??0,reserved=stock?.reserved??0;
+   const orderId=original?.tool_order_id??request.tool_order_id;
+   if(orderId)await tx.$queryRaw`SELECT id FROM tool_orders WHERE id=${orderId}::uuid FOR UPDATE`;
+   const order=orderId?await tx.toolOrder.findUnique({where:{id:orderId}}):null;
+   if(orderId&&(!order||order.tool_id!==toolId))throw new AuthError(409,'この工具の発注を選択してください');
+   const receiptPack=original?.receipt_units_per_order??order?.units_per_order??tool.units_per_order;
+   if(request.expected_units_per_order!==undefined&&request.expected_units_per_order!==receiptPack)throw new AuthError(409,'入数が変更されています。再読み込みしてください');
    let delta:number,type:TransactionType;
    if(operation==='issue'){delta=-request.quantity!;type='ISSUE';}
-   else if(operation==='receive'){delta=request.quantity!;type='RECEIVE';}
+   else if(operation==='receive'){delta=request.quantity_unit==='order'?stockQuantity(request.quantity!,receiptPack):request.quantity!;type='RECEIVE';}
    else{delta=-original!.quantity;type='REVERSAL';}
+   if(order){
+    const received=order.received_quantity+delta;
+    if(received<0||received+order.cancelled_quantity>order.stock_quantity)throw new AuthError(409,'発注の未入庫数を超えています。数量を確認してください');
+    await tx.toolOrder.update({where:{id:order.id},data:{received_quantity:received}});
+   }
    const after=before+delta;
    if(after<reserved)throw new AuthError(409,'出庫可能在庫が不足しています。実在庫と引当を確認してください');
    if(after>2147483647||after<0)throw new AuthError(409,'変更後の在庫が数量の上限・下限を超えます');
@@ -52,17 +57,18 @@ export async function mutateInventory(db:PrismaClient,auth:AuthService,token:str
     const updated=await tx.stockBalance.updateMany({where:{id:stock.id,on_hand:before,reserved},data:{on_hand:after}});
     if(updated.count!==1)throw new AuthError(409,'在庫が変わりました。再確認してください');
    }else await tx.stockBalance.create({data:{tool_id:toolId,location_id:locationId,on_hand:after,reserved:0}});
-   const unitPrice=original?original.unit_price:tool.unit_price;
-   const transaction=await tx.inventoryTransaction.create({data:{tool_id:toolId,location_id:locationId,actor_user_id:actor.id,type,quantity:delta,idempotency_key:key,reverses_id:original?.id??null,reason:operation==='reverse'?(request.reason??'入出庫履歴から取消'):request.reason,on_hand_after:after,unit_price:unitPrice}});
+   const cost=original?{unit_price:original.unit_price,amount:original.amount?.negated()??null,purchase_unit_price:original.purchase_unit_price,cost_units_per_order:original.cost_units_per_order,stock_unit:original.stock_unit,cost_basis:original.cost_basis}:costSnapshot(tool,delta);
+   const transaction=await tx.inventoryTransaction.create({data:{tool_id:toolId,location_id:locationId,actor_user_id:actor.id,type,quantity:delta,idempotency_key:key,reverses_id:original?.id??null,reason:operation==='reverse'?(request.reason??'入出庫履歴から取消'):request.reason,on_hand_after:after,...cost,tool_order_id:orderId??null,receipt_units_per_order:operation==='issue'?null:receiptPack}});
    const result:InventoryResult={id:transaction.id,type,tool_id:toolId,location_id:locationId,actor_user_id:actor.id,machine_id:null,quantity:delta,on_hand_before:before,on_hand_after:after,reserved,reason:transaction.reason,reverses_id:transaction.reverses_id,created_at:transaction.created_at.toISOString()};
    await audit(tx,actor.id,'INVENTORY_MUTATION','inventory_transactions',transaction.id,{request,request_fingerprint:signature,result});
    if(operation==='issue'){
-    const [balance,policy,ordered]=await Promise.all([
+    const [balance,policy,ordered,newOrders]=await Promise.all([
      tx.stockBalance.aggregate({where:{tool_id:toolId},_sum:{on_hand:true}}),
      tx.inventoryPolicy.findUnique({where:{tool_id:toolId},select:{reorder_point:true}}),
      tx.purchaseOrderItem.findMany({where:{tool_id:toolId,order_id_record:{status:{in:['ORDERED','PARTIALLY_RECEIVED']}}},select:{ordered_quantity:true,received_quantity:true}}),
+     tx.toolOrder.findMany({where:{tool_id:toolId},select:{stock_quantity:true,received_quantity:true,cancelled_quantity:true}}),
     ]);
-    const onOrder=ordered.reduce((sum,item)=>sum+Math.max(item.ordered_quantity-item.received_quantity,0),0);
+    const onOrder=newOrders.reduce((sum,item)=>sum+item.stock_quantity-item.received_quantity-item.cancelled_quantity,0)+ordered.reduce((sum,item)=>sum+Math.max(item.ordered_quantity-item.received_quantity,0),0);
     if((balance._sum.on_hand??0)<(policy?.reorder_point??0)+onOrder){
      const entry=await tx.orderListEntry.upsert({where:{tool_id:toolId},create:{tool_id:toolId,trigger_transaction_id:transaction.id},update:{trigger_transaction_id:transaction.id}});
      await audit(tx,actor.id,'ORDER_LIST_UPDATED','order_list_entries',entry.id,{tool_id:toolId,trigger_transaction_id:transaction.id});

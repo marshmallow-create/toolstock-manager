@@ -96,3 +96,24 @@ test('DB cache replaces stale generated clients and reuses the current client',a
   Object.assign(cache,saved);if(savedUrl===undefined)delete process.env.DATABASE_URL;else process.env.DATABASE_URL=savedUrl;
  }
 });
+
+test('単位・金額移行は既存履歴を保持し補完後も履歴更新を拒否する',async()=>{
+ const url=process.env.TEST_DATABASE_URL;assert.ok(url);assert.match(new URL(url).pathname,/test/i);
+ const client=new pg.Client({connectionString:url});await client.connect();const schema='cost_'+randomUUID().replaceAll('-','');
+ try{
+  await client.query('CREATE SCHEMA '+schema);await client.query('SET search_path TO '+schema);
+  const names=(await readdir('prisma/migrations')).filter(n=>/^\d/.test(n)).sort();
+  for(const name of names.filter(n=>n<'20261112010000'))await client.query(await readFile('prisma/migrations/'+name+'/migration.sql','utf8'));
+  const tool=randomUUID(),location=randomUUID(),user=randomUUID(),issue=randomUUID();
+  await client.query("INSERT INTO tools(id,tool_code,name,category,unit,unit_price,updated_at) VALUES ($1,'COST','legacy','INSERT','個',5000,now())",[tool]);
+  await client.query("INSERT INTO locations(id,location_code,name,updated_at) VALUES ($1,'COST','legacy',now())",[location]);
+  await client.query("INSERT INTO users(id,employee_code,name,role,updated_at) VALUES ($1,'COST','legacy','ADMIN',now())",[user]);
+  await client.query("INSERT INTO inventory_transactions(id,tool_id,location_id,actor_user_id,type,quantity,unit_price,idempotency_key,updated_at) VALUES ($1,$2,$3,$4,'ISSUE',-3,123.45,'cost-legacy',now())",[issue,tool,location,user]);
+  await client.query("INSERT INTO inventory_transactions(id,tool_id,location_id,actor_user_id,type,quantity,unit_price,reverses_id,reason,idempotency_key,updated_at) VALUES ($1,$2,$3,$4,'REVERSAL',3,123.45,$5,'取消','cost-reversal',now())",[randomUUID(),tool,location,user,issue]);
+  for(const name of names.filter(n=>n>='20261112010000'))await client.query(await readFile('prisma/migrations/'+name+'/migration.sql','utf8'));
+  const rows=(await client.query('SELECT quantity,unit_price,amount,cost_basis,cost_units_per_order FROM inventory_transactions ORDER BY quantity')).rows;
+  assert.equal(rows[0].quantity,-3);assert.equal(rows[0].unit_price,'123.45000000');assert.equal(rows[0].amount,'-370.35');assert.equal(rows[1].amount,'370.35');assert.equal(rows[0].cost_basis,'LEGACY');assert.equal(rows[0].cost_units_per_order,null);
+  assert.deepEqual((await client.query('SELECT order_unit,units_per_order,unit_price FROM tools')).rows,[{order_unit:'個',units_per_order:1,unit_price:'5000.00'}]);
+  await assert.rejects(client.query('UPDATE inventory_transactions SET amount=0'),(e:unknown)=>(e as {code:string}).code==='P0001');
+ }finally{await client.query('ROLLBACK');await client.query('SET search_path TO public');await client.query('DROP SCHEMA IF EXISTS '+schema+' CASCADE');await client.end();}
+});

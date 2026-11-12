@@ -4,9 +4,11 @@ import { AuthService, AuthError } from '../auth/service';
 import { code, text, integer, price, categoryValue, departmentValue } from './validation';
 import { conflict, updateToolInTransaction } from './write';
 import { MAX_IMPORT_ROWS, type ImportRow, type ImportPreviewRow } from './tool-import';
+import { categoryCode } from '../tool-options';
 
 export type UpdatePreviewRow = ImportPreviewRow & { before: Record<string,string>; changes: string[] };
 const validators: Record<string,(value:unknown)=>string|number> = {
+ unit:value=>text(value,'在庫単位',16),order_unit:value=>text(value,'発注単位',16),units_per_order:value=>integer(value,'入数',1),
  name:value=>text(value,'品目名',100), category:categoryValue,
  on_hand:value=>integer(value,'在庫'), reorder_point:value=>integer(value,'発注ライン'),
  order_quantity:value=>integer(value,'発注数'), unit_price:price,
@@ -19,10 +21,12 @@ async function inspectUpdate(db: Pick<Prisma.TransactionClient,'tool'>, rows:Imp
  const tools=await db.tool.findMany({where:{tool_code:{in:codes}},orderBy:{id:'asc'},include:{
   stock_balances_tool_id_children:{orderBy:{id:'asc'}},inventory_policies_tool_id_children:true,
   reorder_candidates_tool_id_children:{where:{status:'OPEN'},orderBy:{id:'asc'}},
+  _count:{select:{inventory_transactions_tool_id_children:true}},
  }});
  const byCode=new Map(tools.map(tool=>[tool.tool_code,tool]));
  const result:UpdatePreviewRow[]=rows.map((row,index)=>{
   const tool=byCode.get(codes[index]),errors:string[]=[],before:Record<string,string>=tool?{
+   unit:tool.unit,order_unit:tool.order_unit,units_per_order:String(tool.units_per_order),
    tool_code:tool.tool_code,name:tool.name,category:tool.category,department:tool.department,shelf_code:tool.shelf_code,
    unit_price:tool.unit_price?.toString()??'',on_hand:String(tool.stock_balances_tool_id_children.reduce((sum,stock)=>sum+stock.on_hand,0)),
    reorder_point:String(tool.inventory_policies_tool_id_children?.reorder_point??0),
@@ -37,13 +41,16 @@ async function inspectUpdate(db: Pick<Prisma.TransactionClient,'tool'>, rows:Imp
    const value=row.values[field];
    if(value===undefined || value===null || value==='')continue;
    supplied++;
+   // Migrated shelves can exceed the new-input limit; retain an unchanged value.
+   if(field==='shelf_code' && value===before[field])continue;
    try{
     values[field]=String(validate(value));
-    const equal=field==='unit_price'?before[field]!=='' && Number(before[field])===Number(values[field]):before[field]===values[field];
+    const equal=field==='unit_price'?before[field]!=='' && Number(before[field])===Number(values[field]):field==='category'?categoryCode(before[field])===values[field]:before[field]===values[field];
     if(!equal)changes.push(field);
    }catch(error){if(!(error instanceof AuthError))throw error;errors.push(error.message);}
   }
   if(!supplied)errors.push('変更する項目を入力してください。');
+  if(tool && changes.includes('unit') && (tool.stock_balances_tool_id_children.length || tool._count.inventory_transactions_tool_id_children))errors.push('在庫・履歴がある工具の単位は変更できません。');
   if(tool && changes.includes('on_hand') && Number(values.on_hand)<tool.stock_balances_tool_id_children.reduce((sum,stock)=>sum+stock.reserved,0))errors.push('在庫は引当数以上で入力してください。');
   return {rowNumber:row.rowNumber,values,before,changes,errors};
  });

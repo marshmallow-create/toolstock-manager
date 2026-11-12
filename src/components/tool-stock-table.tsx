@@ -5,7 +5,7 @@ import { formatPrice } from '@/lib/format-price';
 type ToolStockRow = {
  id: string; tool_code: string; name: string; category: string;
  on_hand: number; on_order: number; reorder_point: number | null; order_quantity: number;
- unit_price?: string | null; department: string; shelf_code: string;
+ unit?:string;order_unit?:string;units_per_order?:number;stock_unit_price?:string|null;unit_price?: string | null; department: string; shelf_code: string;
 };
 
 export function ToolStockTable({ tools }: { tools: ToolStockRow[] }) {
@@ -16,11 +16,11 @@ export function ToolStockTable({ tools }: { tools: ToolStockRow[] }) {
    <td className="border-b p-4"><Link href={'/tools/' + tool.id} className="font-bold underline">{tool.tool_code}</Link></td>
    <td className="border-b p-4"><Link href={'/tools/' + tool.id} className="underline">{tool.name}</Link></td>
    <td className="border-b p-4">{categoryLabel(tool.category)}</td>
-   <td className="border-b p-4 tabular-nums">{tool.on_hand.toLocaleString('ja-JP')}</td>
-   <td className="border-b p-4 tabular-nums" title="発注済みの未入荷数">{tool.on_order.toLocaleString('ja-JP')}</td>
-   <td className="border-b p-4 tabular-nums">{tool.reorder_point?.toLocaleString('ja-JP') ?? '—'}</td>
-   <td className="border-b p-4 tabular-nums" title="未処理の発注候補数">{tool.order_quantity.toLocaleString('ja-JP')}</td>
-   <td className="border-b p-4 tabular-nums" title="工具の単価">{tool.unit_price == null ? '—' : '¥' + formatPrice(tool.unit_price)}</td>
+   <td className="border-b p-4 tabular-nums">{tool.on_hand.toLocaleString('ja-JP')} {tool.unit}</td>
+   <td className="border-b p-4 tabular-nums" title="発注済みの未入荷数">{tool.on_order.toLocaleString('ja-JP')} {tool.unit}</td>
+   <td className="border-b p-4 tabular-nums">{tool.reorder_point?.toLocaleString('ja-JP') ?? '—'} {tool.unit}</td>
+   <td className="border-b p-4 tabular-nums" title="未処理の発注候補数">{tool.order_quantity.toLocaleString('ja-JP')} {tool.order_unit??tool.unit}</td>
+   <td className="border-b p-4 tabular-nums" title={'仕入単価（1'+(tool.order_unit??tool.unit??'発注単位')+'あたり）'}>{tool.unit_price == null ? '—' : '¥' + formatPrice(tool.unit_price)}<small className="ml-2 text-slate-500">／{tool.order_unit??tool.unit}（{tool.units_per_order??1}{tool.unit}入）</small></td>
    <td className="border-b p-4">{tool.department || '—'}</td>
    <td className="border-b p-4">{tool.shelf_code || '—'}</td>
   </tr>)}</tbody>

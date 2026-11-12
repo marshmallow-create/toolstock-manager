@@ -1,14 +1,38 @@
 import ExcelJS from 'exceljs';
+import JSZip from 'jszip';
 import { fromBuffer, type Entry } from 'yauzl';
 import { SaxesParser } from 'saxes';
 import { AuthError } from '../auth/service';
-import { toolCategories, toolDepartments } from '../tool-options';
+import { toolCategories, toolDepartments, categoryLabel } from '../tool-options';
 import { MAX_IMPORT_ROWS, type ImportRow } from './tool-import';
 
 export const MAX_WORKBOOK_BYTES = 2 * 1024 * 1024;
-export const IMPORT_HEADERS = ['品目コード', '品目名', 'カテゴリー', '在庫', '発注ライン', '発注数', '単価', '部門', '棚番'];
-export const IMPORT_FIELDS = ['tool_code', 'name', 'category', 'on_hand', 'reorder_point', 'order_quantity', 'unit_price', 'department', 'shelf_code'];
+export const IMPORT_HEADERS = ['品目コード', '品目名', 'カテゴリー', '在庫', '発注ライン', '発注数', '単価', '部門', '棚番', '在庫単位', '発注単位', '入数'];
+export const IMPORT_FIELDS = ['tool_code', 'name', 'category', 'on_hand', 'reorder_point', 'order_quantity', 'unit_price', 'department', 'shelf_code', 'unit', 'order_unit', 'units_per_order'];
 export type WorkbookMode = 'create'|'update';
+type ExportTool = {tool_code:string;name:string;category:string;on_hand:number;reorder_point:number;order_quantity:number;unit_price:string|null;department:string;shelf_code:string;unit?:string;order_unit?:string;units_per_order?:number};
+
+export async function createToolExport(tools:readonly ExportTool[]) {
+ const template=await createToolTemplate('update');
+ const workbook=async(rows:readonly ExportTool[])=>{
+  const book=new ExcelJS.Workbook();await book.xlsx.load(template as never);
+  const sheet=book.getWorksheet('工具変更')!;
+  rows.forEach((tool,index)=>{
+   const values=[tool.tool_code,tool.name,categoryLabel(tool.category),tool.on_hand,tool.reorder_point,tool.order_quantity,tool.unit_price===null?'':Number(tool.unit_price),tool.department,tool.shelf_code,tool.unit??'',tool.order_unit??'',tool.units_per_order??''];
+   values.forEach((value,column)=>{sheet.getCell(index+2,column+1).value=value;});
+  });
+  const instructions=book.getWorksheet('入力方法')!;
+  instructions.addRow([rows.length?'検索条件に一致する工具の現在値です。品目コードは変更せず、変更対象以外の行は削除してください。':'検索条件に該当する工具はありません。']);
+  instructions.addRow(['出力後に在庫などが変わる場合があります。変更しない項目は空欄にし、アップロード後の変更前後を確認してから確定してください。']);
+  return Buffer.from(await book.xlsx.writeBuffer());
+ };
+ if(tools.length<=MAX_IMPORT_ROWS)return {buffer:await workbook(tools),contentType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',filename:'toolstock-update.xlsx'};
+ const zip=new JSZip();
+ for(let offset=0;offset<tools.length;offset+=MAX_IMPORT_ROWS){
+  zip.file(`toolstock-update-${String(offset/MAX_IMPORT_ROWS+1).padStart(4,'0')}.xlsx`,await workbook(tools.slice(offset,offset+MAX_IMPORT_ROWS)));
+ }
+ return {buffer:await zip.generateAsync({type:'nodebuffer',compression:'STORE'}),contentType:'application/zip',filename:'toolstock-update.zip'};
+}
 
 function checkXml(xml:string,worksheet:boolean) {
  const parser=new SaxesParser({xmlns:false});let rows=0,cells=0,sheets=0;
@@ -28,8 +52,8 @@ function checkXml(xml:string,worksheet:boolean) {
     if(++rows>MAX_IMPORT_ROWS+1 || typeof row!=='string' || !/^\d+$/.test(row) || Number(row)<1 || Number(row)>MAX_IMPORT_ROWS+1)throw new AuthError(400,'入力は見出しの次の200行以内にしてください。');
    }
    if(name==='c'){
-    const ref=tag.attributes.r,cell=typeof ref==='string'?ref.match(/^([A-I])([1-9]\d*)$/):null;
-    if(++cells>(MAX_IMPORT_ROWS+1)*9 || !cell || Number(cell[2])>MAX_IMPORT_ROWS+1)throw new AuthError(400,'テンプレートの9列・200行を超えるセルがあります。');
+    const ref=tag.attributes.r,cell=typeof ref==='string'?ref.match(/^([A-L])([1-9]\d*)$/):null;
+    if(++cells>(MAX_IMPORT_ROWS+1)*IMPORT_FIELDS.length || !cell || Number(cell[2])>MAX_IMPORT_ROWS+1)throw new AuthError(400,'テンプレートの12列・200行を超えるセルがあります。');
    }
   }
  });
@@ -79,11 +103,12 @@ export async function createToolTemplate(mode:WorkbookMode='create') {
  sheet.getRow(1).font={bold:true,color:{argb:'FFFFFFFF'}};
  sheet.getRow(1).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF285957'}};
  for(let row=2;row<=MAX_IMPORT_ROWS+1;row++){
-  for(const column of ['A','B','C','H','I'])sheet.getCell(column+row).numFmt='@';
+  for(const column of ['A','B','C','H','I','J','K'])sheet.getCell(column+row).numFmt='@';
   sheet.getCell('C'+row).dataValidation={type:'list',allowBlank:mode==='update',formulae:['"'+toolCategories.map(option=>option.label).join(',')+'"'],showErrorMessage:true,errorStyle:'stop',error:'カテゴリーは候補から選択してください。'};
   sheet.getCell('H'+row).dataValidation={type:'list',allowBlank:true,formulae:['"'+toolDepartments.join(',')+'"'],showErrorMessage:true,errorStyle:'stop',error:'部門は候補から選択してください。'};
   for(const column of ['D','E','F'])sheet.getCell(column+row).dataValidation={type:'whole',operator:'between',allowBlank:true,formulae:[0,2147483647],showErrorMessage:true,errorStyle:'stop',error:'0以上の整数を入力してください。'};
   sheet.getCell('G'+row).numFmt='0';
+  sheet.getCell('L'+row).dataValidation={type:'whole',operator:'between',allowBlank:true,formulae:[1,2147483647],showErrorMessage:true,errorStyle:'stop',error:'入数は1以上の整数です。'};
  }
  const instructions=book.addWorksheet('入力方法');instructions.getColumn(1).width=105;
  for(const line of [
@@ -91,6 +116,8 @@ export async function createToolTemplate(mode:WorkbookMode='create') {
   '列の追加・削除・見出しの変更・セル結合・数式は使用できません。',
   mode==='update'?'既存工具と一致する品目コードが必須です。他の項目は変更する値だけを入力してください。空欄の項目は変更しません。数量・単価の0は変更する値として扱います。':'品目コード・品目名・カテゴリー・単価は必須です。在庫・発注ライン・発注数の空欄は0です。',
   'カテゴリー：ドリル、エンドミル、タップ、リーマ、チップ',
+  '単価は1箱・1袋など発注単位あたりの仕入価格。在庫と発注ラインは在庫単位、発注数は発注単位です。',
+  '在庫単位・発注単位は16文字以内。入数は1発注単位に含む在庫単位の数量（1以上の整数）。旧9列のファイルも使用できます。',
   mode==='update'?'部門：17314、17361、17362、17363。部門・棚番の空欄は変更しません。空欄への変更はできません。':'部門：17314、17361、17362、17363。部門・棚番は空欄可。',
   '品目コードは半角英数字・ハイフン・アンダースコア32文字以内。先頭の0が必要な場合は文字列として入力してください。',
   '品目名・棚番は100文字以内。数量は0～2147483647の整数、単価は整数部12桁・小数部2桁以内。',
@@ -118,12 +145,14 @@ export async function parseToolWorkbook(buffer:Buffer,mode:WorkbookMode='create'
   if(value.length>1000)throw new AuthError(400,`${row}行目：セルの文字数が長すぎます。`);
   return value;
  };
- if(IMPORT_HEADERS.some((header,index)=>read(sheet.getRow(1).getCell(index+1),1)!==header))throw new AuthError(400,'列の見出しがテンプレートと一致しません。');
+ const legacy=read(sheet.getRow(1).getCell(10),1)===''&&read(sheet.getRow(1).getCell(11),1)===''&&read(sheet.getRow(1).getCell(12),1)==='';
+ const fields=legacy?IMPORT_FIELDS.slice(0,9):IMPORT_FIELDS;
+ if((legacy?IMPORT_HEADERS.slice(0,9):IMPORT_HEADERS).some((header,index)=>read(sheet.getRow(1).getCell(index+1),1)!==header))throw new AuthError(400,'列の見出しがテンプレートと一致しません。');
  const rows:ImportRow[]=[];
  sheet.eachRow((row,rowNumber)=>{
-  row.eachCell((cell,column)=>{if(column>IMPORT_FIELDS.length && read(cell,rowNumber))throw new AuthError(400,`${rowNumber}行目：テンプレートにない列があります。`);});
+  row.eachCell((cell,column)=>{if(column>fields.length && read(cell,rowNumber))throw new AuthError(400,`${rowNumber}行目：テンプレートにない列があります。`);});
   if(rowNumber===1)return;
-  const values=Object.fromEntries(IMPORT_FIELDS.map((field,index)=>[field,read(row.getCell(index+1),rowNumber)]));
+  const values=Object.fromEntries(fields.map((field,index)=>[field,read(row.getCell(index+1),rowNumber)]));
   if(Object.values(values).every(value=>value===''))return;
   rows.push({rowNumber,values});
   if(rows.length>MAX_IMPORT_ROWS)throw new AuthError(400,`一度に${mode==='update'?'変更':'登録'}できるのは200件までです。`);

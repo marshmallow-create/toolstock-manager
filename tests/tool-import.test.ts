@@ -4,6 +4,8 @@ import { databaseFixture } from './helpers/database';
 import { AuthService, AuthError } from '../src/lib/auth/service';
 import { previewToolImport, commitToolImport } from '../src/lib/masters/tool-import';
 import { previewToolUpdate, commitToolUpdate } from '../src/lib/masters/tool-update';
+import { exportTools } from '../src/lib/masters/read';
+import { createToolExport, parseToolWorkbook } from '../src/lib/masters/tool-workbook';
 
 let fixture: Awaited<ReturnType<typeof databaseFixture>>;
 let auth: AuthService;
@@ -11,6 +13,29 @@ before(async () => { fixture = await databaseFixture('tool_import'); auth = new 
 after(async () => { await fixture?.close(); });
 const row = (code: string, rowNumber = 2) => ({ rowNumber, values: { tool_code: code, name: '一括ドリル', category: 'ドリル', on_hand: '7', reorder_point: '3', order_quantity: '4', unit_price: '125.50', department: '17314', shelf_code: 'A-01' } });
 const status = (n: number) => (error: unknown) => error instanceof AuthError && error.status === n;
+
+test('既存の日本語カテゴリーを含む未編集の出力Excelは変更を発生させない',async()=>{
+ await commitToolImport(fixture.db,auth,fixture.tokens.ADMIN,[row('EXPORT-LEGACY-CATEGORY')]);
+ await fixture.db.tool.update({where:{tool_code:'EXPORT-LEGACY-CATEGORY'},data:{category:'ドリル'}});
+ const file=await createToolExport(await exportTools(fixture.db,auth,fixture.tokens.ADMIN,{tool_code:'EXPORT-LEGACY-CATEGORY'}));
+ const rows=await parseToolWorkbook(file.buffer,'update');
+ const preview=await previewToolUpdate(fixture.db,auth,fixture.tokens.ADMIN,rows);
+ assert.equal(preview.valid,true);assert.deepEqual(preview.rows[0].changes,[]);
+ assert.equal((await commitToolUpdate(fixture.db,auth,fixture.tokens.ADMIN,rows,preview.previewToken)).count,0);
+ assert.equal((await fixture.db.tool.findUniqueOrThrow({where:{tool_code:'EXPORT-LEGACY-CATEGORY'}})).category,'ドリル');
+});
+
+test('既存の長い棚番を出力したExcelで品目名だけを変更できる',async()=>{
+ await commitToolImport(fixture.db,auth,fixture.tokens.ADMIN,[row('EXPORT-LEGACY-SHELF')]);
+ const shelf='棚'.repeat(120);
+ await fixture.db.tool.update({where:{tool_code:'EXPORT-LEGACY-SHELF'},data:{shelf_code:shelf}});
+ const file=await createToolExport(await exportTools(fixture.db,auth,fixture.tokens.ADMIN,{tool_code:'EXPORT-LEGACY-SHELF'}));
+ const rows=await parseToolWorkbook(file.buffer,'update');rows[0].values.name='棚番を保持';
+ const preview=await previewToolUpdate(fixture.db,auth,fixture.tokens.ADMIN,rows);
+ assert.equal(preview.valid,true,JSON.stringify(preview.rows[0].errors));assert.deepEqual(preview.rows[0].changes,['name']);
+ assert.equal((await commitToolUpdate(fixture.db,auth,fixture.tokens.ADMIN,rows,preview.previewToken)).count,1);
+ assert.equal((await fixture.db.tool.findUniqueOrThrow({where:{tool_code:'EXPORT-LEGACY-SHELF'}})).shelf_code,shelf);
+});
 
 test('一括変更は空欄を保持し0も更新でき、通常変更と同じ履歴を作る',async()=>{
  await commitToolImport(fixture.db,auth,fixture.tokens.ADMIN,[row('UPDATE-A')]);

@@ -24,6 +24,21 @@ type FixtureStock=Awaited<ReturnType<typeof stock>>;
 const issueInput=(s:FixtureStock,quantity=1)=>({tool_id:s.tool.id,location_id:s.location.id,quantity,request_key:randomUUID()});
 const balance=(s:FixtureStock)=>f.db.stockBalance.findUniqueOrThrow({where:{tool_id_location_id:{tool_id:s.tool.id,location_id:s.location.id}}});
 
+test('入数で割った単価・金額を保存し価格変更後の取消でも元金額を戻す',async()=>{
+ const s=await stock(20);
+ await masters.updateTool(token(),s.tool.id,{name:s.tool.name,category:s.tool.category,unit:s.tool.unit,active:true,reorder_point:0,order_unit:'箱',units_per_order:10,unit_price:'5000'});
+ const issued=await service.issue(token(),issueInput(s,3));
+ const history=await service.historyDetail(token(),issued.id);
+ assert.equal(history.unit_price,'500.00');assert.equal(history.amount,'-1500.00');
+ await masters.updateTool(token(),s.tool.id,{name:s.tool.name,category:s.tool.category,unit:s.tool.unit,active:true,reorder_point:0,units_per_order:3,unit_price:'1000'});
+ const reversed=await service.reverse(token(),{transaction_id:issued.id,request_key:randomUUID()});
+ assert.equal((await service.historyDetail(token(),reversed.id)).amount,'1500.00');
+ const third=await service.issue(token(),issueInput(s,3));
+ assert.equal((await service.historyDetail(token(),third.id)).amount,'-1000.00');
+ const one=await service.issue(token(),issueInput(s));
+ assert.equal((await service.historyDetail(token(),one.id)).amount,'-333.33');
+});
+
 test('出庫はセッションの操作者で残高・履歴・監査を一体保存する',async()=>{
  const s=await stock(10,2);
  const result=await service.issue(token('WORKER'),{...issueInput(s,3),actor_user_id:f.users.ADMIN,reserved:0});
@@ -284,7 +299,7 @@ test('history freezes transaction balance and decimal price and filters inclusiv
  assert.deepEqual((await service.listHistory(token(),{tool_id:s.tool.id,unit_price_min:'100.25',unit_price_max:'100.25',movement:'RECEIVE'})).items.map(x=>x.id),[reversed.id]);
  assert.equal((await service.historyDetail(token('WORKER'),issued.id)).unit_price,'100.25');
  assert.deepEqual((await service.listHistory(token('WORKER'),{tool_id:s.tool.id,unit_price_min:'100.25',unit_price_max:'100.25'})).items.map(x=>x.id).sort(),[issued.id,reversed.id].sort());
- for(const query of [{unit_price_min:'-1'},{unit_price_max:'1.001'},{unit_price_min:'1e2'},{unit_price_min:'2',unit_price_max:'1'},{movement:'BOGUS'}])await assert.rejects(service.listHistory(token(),query),status(400));
+ for(const query of [{unit_price_min:'-1'},{unit_price_max:'1.000000001'},{unit_price_min:'1e2'},{unit_price_min:'2',unit_price_max:'1'},{movement:'BOGUS'}])await assert.rejects(service.listHistory(token(),query),status(400));
  assert.equal((await service.listHistory(token(),{tool_id:s.tool.id,unit_price_min:'',unit_price_max:''})).items.length,4);
 });
 
@@ -297,4 +312,22 @@ test('snapshot prices include zero and maximum precision and old replay retains 
  assert.deepEqual((await service.listHistory(token(),{tool_id:s.tool.id,unit_price_max:'0'})).items.map(x=>x.id),[zero.id]);
  const tool=await masters.createTool(token(),{tool_code:'SNAPSHOT-OPENING',category:'DRILL',name:'opening snapshot',on_hand:4,unit_price:'12.34'});
  const opening=(await service.listHistory(token(),{tool_id:tool.id})).items[0];assert.equal(opening.on_hand_after,4);assert.equal(opening.unit_price,'12.34');
+});
+
+test('割り切れない在庫単価を8桁で検索でき最大金額も表示で丸め落とさない',async()=>{
+ const s=await stock(10);await masters.updateTool(token(),s.tool.id,{name:s.tool.name,category:s.tool.category,unit:s.tool.unit,active:true,reorder_point:0,units_per_order:3,unit_price:'1000'});
+ const issued=await service.issue(token(),issueInput(s));
+ const list=await service.listHistory(token(),{tool_id:s.tool.id,unit_price_min:'333.33333333',unit_price_max:'333.33333333'});
+ assert.ok(list.items.some(item=>item.id===issued.id));
+ const {formatMoney}=await import('../src/lib/format-price');
+ assert.equal(formatMoney('2147483646999978525163.53'),'2,147,483,646,999,978,525,163.53');
+});
+
+test('換算の最大価格・最大数量と未設定・0円の金額を区別する',async()=>{
+ const {Prisma}=await import('../src/generated/prisma/client');const {inventoryCost,stockQuantity}=await import('../src/lib/inventory/cost');
+ const max=inventoryCost(new Prisma.Decimal('999999999999.99'),1,2147483647);
+ const cents=99999999999999n*2147483647n;
+ assert.equal(max.amount?.toFixed(2),(cents/100n).toString()+'.'+String(cents%100n).padStart(2,'0'));
+ assert.equal(inventoryCost(null,10,3).amount,null);assert.equal(inventoryCost(new Prisma.Decimal(0),10,3).amount?.toFixed(2),'0.00');
+ assert.throws(()=>stockQuantity(2147483647,10),status(400));
 });

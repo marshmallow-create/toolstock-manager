@@ -81,7 +81,7 @@ test('新規作業者が登録前の履歴を一覧・詳細・画面で参照�
  const listing=await request('/api/history?tool_id='+toolId,undefined,{headers});assert.equal(listing.status,200);
  const rows=await listing.json();assert.equal(rows.items.find((item:{id:string})=>item.id===old.id)?.unit_price,'123.45');
  const detail=await request('/api/history/'+old.id,undefined,{headers});assert.equal(detail.status,200);assert.equal((await detail.json()).transaction.unit_price,'123.45');
- const page=await request('/history?tool_id='+toolId,undefined,{headers});assert.equal(page.status,200);const html=await page.text();assert.ok(html.includes('INV-HTTP'));assert.ok(html.includes(fixture.users.ADMIN));assert.match(html,/<td\b[^>]*>¥123<\/td>/);assert.ok(html.includes('name="unit_price_min"'));assert.ok(!html.includes('action="/api/inventory/reverse"'));
+ const page=await request('/history?tool_id='+toolId,undefined,{headers});assert.equal(page.status,200);const html=await page.text();assert.ok(html.includes('INV-HTTP'));assert.ok(html.includes(fixture.users.ADMIN));assert.match(html,/<td\b[^>]*>¥123\.45<\/td>/);assert.ok(html.includes('name="unit_price_min"'));assert.ok(!html.includes('action="/api/inventory/reverse"'));
  const filtered=await request('/api/history?tool_id='+toolId+'&unit_price_min=123.45&unit_price_max=123.45',undefined,{headers});assert.equal(filtered.status,200);const priced=await filtered.json();assert.equal(priced.total,1);assert.equal(priced.items[0].id,old.id);assert.equal(priced.items[0].unit_price,'123.45');
  assert.equal((await request('/api/inventory/reverse',undefined,{method:'POST',headers:{...headers,Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({transaction_id:old.id,request_key:randomUUID()})})).status,403);
 });
@@ -182,10 +182,10 @@ test('history uses workspace layout chronological column order and price ranges 
  const id=(await created.json()).transaction.id;
  const admin=await request('/history?tool_id='+toolId+'&unit_price_min=210.50&unit_price_max=210.50','ADMIN');assert.equal(admin.status,200);const html=await admin.text();
  const headings=[...html.matchAll(/<th\b[^>]*>(.*?)<\/th>/g)].map(m=>m[1]);
- assert.deepEqual(headings,['日時','品目コード','品目名','カテゴリー','入出庫履歴','数量','操作者','在庫数','単価']);
- assert.ok(html.includes('max-w-[1600px]'));assert.ok(html.includes('name="unit_price_min"'));assert.ok(html.includes('name="unit_price_max"'));assert.match(html,/<td\b[^>]*>¥211<\/td>/);assert.doesNotMatch(html,/¥210\.50/);assert.equal(/href="\/history\//.test(html),false);
+ assert.deepEqual(headings,['日時','品目コード','品目名','カテゴリー','入出庫履歴','数量','操作者','在庫数','単価（在庫単位あたり）','金額']);
+ assert.ok(html.includes('max-w-[1600px]'));assert.ok(html.includes('name="unit_price_min"'));assert.ok(html.includes('name="unit_price_max"'));assert.match(html,/<td\b[^>]*>¥210\.5<\/td>/);assert.doesNotMatch(html,/¥210\.50/);assert.equal(/href="\/history\//.test(html),false);
  const api=await request('/api/history?tool_id='+toolId+'&unit_price_min=210.50&unit_price_max=210.50','ADMIN');const data=await api.json();assert.equal(data.total,1);assert.equal(data.items[0].quantity,4);assert.equal(data.items[0].unit_price,'210.50');
- const worker=await request('/history?tool_id='+toolId+'&unit_price_min=210.50&unit_price_max=210.50','WORKER');assert.equal(worker.status,200);const workerHtml=await worker.text();assert.ok(workerHtml.includes('name="unit_price_min"'));assert.ok(workerHtml.includes('name="unit_price_max"'));assert.match(workerHtml,/<td\b[^>]*>¥211<\/td>/);assert.doesNotMatch(workerHtml,/¥210\.50/);
+ const worker=await request('/history?tool_id='+toolId+'&unit_price_min=210.50&unit_price_max=210.50','WORKER');assert.equal(worker.status,200);const workerHtml=await worker.text();assert.ok(workerHtml.includes('name="unit_price_min"'));assert.ok(workerHtml.includes('name="unit_price_max"'));assert.match(workerHtml,/<td\b[^>]*>¥210\.5<\/td>/);assert.doesNotMatch(workerHtml,/¥210\.50/);
  for (const content of [html, workerHtml]) {
   const main = content.slice(content.indexOf('<main'), content.indexOf('</main>'));
   assert.equal(/<button\b[^>]*aria-controls=/.test(main), false, '履歴にはメニューボタンを表示しない');
@@ -195,4 +195,13 @@ test('history uses workspace layout chronological column order and price ranges 
  }
  const workerApi=await request('/api/history?tool_id='+toolId+'&unit_price_min=210.50&unit_price_max=210.50','WORKER');assert.equal(workerApi.status,200);const workerData=await workerApi.json();assert.equal(workerData.total,1);assert.equal(workerData.items[0].id,id);assert.equal(workerData.items[0].unit_price,'210.50');
  for(const role of ['ADMIN','WORKER'])assert.equal((await request('/api/history?unit_price_min=2&unit_price_max=1',role)).status,400);
+});
+
+test('取消履歴は在庫を増やす取消と減らす取消を区別して表示する',async()=>{
+ for(const action of ['receive','issue']){
+  const response=await post('/api/inventory/'+action,'ADMIN',issueInput());assert.equal(response.status,200);const original=(await response.json()).transaction;
+  assert.equal((await post('/api/inventory/reverse','ADMIN',{transaction_id:original.id,request_key:randomUUID()})).status,200);
+ }
+ const html=await (await request('/history?tool_id='+toolId,'ADMIN')).text();
+ assert.ok(html.includes('取消（在庫増）'));assert.ok(html.includes('取消（在庫減）'));
 });

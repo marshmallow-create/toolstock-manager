@@ -16,13 +16,16 @@ async function inspectImport(db: ImportClient, rows: ImportRow[]) {
   ['category', 'カテゴリー', categoryValue], ['on_hand', '在庫', value => integer(value === '' || value === undefined ? 0 : value, '在庫')],
   ['reorder_point', '発注ライン', value => integer(value === '' || value === undefined ? 0 : value, '発注ライン')],
   ['order_quantity', '発注数', value => integer(value === '' || value === undefined ? 0 : value, '発注数')],
+  ['unit','在庫単位',value=>text(value||'個','在庫単位',16)],
+  ['order_unit','発注単位',value=>text(value||'個','発注単位',16)],
+  ['units_per_order','入数',value=>integer(value===undefined||value===''?1:value,'入数',1)],
   ['unit_price', '単価', price], ['department', '部門', departmentValue], ['shelf_code', '棚番', value => text(value, '棚番', 100, true)],
  ];
  const result: ImportPreviewRow[] = rows.map(row => {
   const values: Record<string, string> = {}, errors: string[] = [];
   for (const [field, label, validate] of checks) {
    values[field] = String(row.values[field] ?? '');
-   try { values[field] = String(validate(row.values[field])); }
+   try { values[field] = String(validate(field==='order_unit'&&!row.values[field] ? row.values.unit || '個' : row.values[field])); }
    catch (error) { if (!(error instanceof AuthError)) throw error; errors.push(`${label}：${error.message}`); }
   }
   return { rowNumber: row.rowNumber, values, errors };

@@ -26,8 +26,8 @@ export default async function History({ searchParams }: { searchParams: Promise<
    <label className="grid gap-1 text-sm">開始日（日本時間）<input type="date" name="from" defaultValue={queryText(search.from)} className={inputClass} /></label>
    <label className="grid gap-1 text-sm">終了日（日本時間）<input type="date" name="to" defaultValue={queryText(search.to)} className={inputClass} /></label>
    {priceVisible && <>
-    <label className="grid gap-1 text-sm">単価の下限（円）<input name="unit_price_min" type="number" min="0" max="999999999999.99" step="0.01" inputMode="decimal" defaultValue={queryText(search.unit_price_min)} className={inputClass} /></label>
-    <label className="grid gap-1 text-sm">単価の上限（円）<input name="unit_price_max" type="number" min="0" max="999999999999.99" step="0.01" inputMode="decimal" defaultValue={queryText(search.unit_price_max)} className={inputClass} /></label>
+    <label className="grid gap-1 text-sm">単価の下限（円）<input name="unit_price_min" type="number" min="0" max="999999999999.99" step="0.00000001" inputMode="decimal" defaultValue={queryText(search.unit_price_min)} className={inputClass} /></label>
+    <label className="grid gap-1 text-sm">単価の上限（円）<input name="unit_price_max" type="number" min="0" max="999999999999.99" step="0.00000001" inputMode="decimal" defaultValue={queryText(search.unit_price_max)} className={inputClass} /></label>
    </>}
    <div className="flex items-end gap-4"><button className="ui-button">検索する</button><Link href="/history" className="py-2 text-sm underline">条件をクリア</Link></div>
   </form>
