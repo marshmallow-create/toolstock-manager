@@ -182,7 +182,7 @@ test('history uses workspace layout chronological column order and price ranges 
  const id=(await created.json()).transaction.id;
  const admin=await request('/history?tool_id='+toolId+'&unit_price_min=210.50&unit_price_max=210.50','ADMIN');assert.equal(admin.status,200);const html=await admin.text();
  const headings=[...html.matchAll(/<th\b[^>]*>(.*?)<\/th>/g)].map(m=>m[1]);
- assert.deepEqual(headings,['日時','品目コード','品目名','カテゴリー','入出庫履歴','数量','操作者','在庫数','単価（在庫単位あたり）','金額']);
+ assert.deepEqual(headings,['日時','品目コード','品目名','カテゴリー','入出庫履歴','数量','操作者','在庫数','単価','金額']);
  assert.ok(html.includes('max-w-[1600px]'));assert.ok(html.includes('name="unit_price_min"'));assert.ok(html.includes('name="unit_price_max"'));assert.match(html,/<td\b[^>]*>¥210\.5<\/td>/);assert.doesNotMatch(html,/¥210\.50/);assert.equal(/href="\/history\//.test(html),false);
  const api=await request('/api/history?tool_id='+toolId+'&unit_price_min=210.50&unit_price_max=210.50','ADMIN');const data=await api.json();assert.equal(data.total,1);assert.equal(data.items[0].quantity,4);assert.equal(data.items[0].unit_price,'210.50');
  const worker=await request('/history?tool_id='+toolId+'&unit_price_min=210.50&unit_price_max=210.50','WORKER');assert.equal(worker.status,200);const workerHtml=await worker.text();assert.ok(workerHtml.includes('name="unit_price_min"'));assert.ok(workerHtml.includes('name="unit_price_max"'));assert.match(workerHtml,/<td\b[^>]*>¥210\.5<\/td>/);assert.doesNotMatch(workerHtml,/¥210\.50/);

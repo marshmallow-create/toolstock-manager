@@ -1,135 +1,59 @@
-# DB設計
+﻿# DB設計
 
-構造の正本は `prisma/schema.prisma` と `prisma/migrations/` です。画面仕様は[現行仕様書](specification.md)を参照してください。
+現行仕様は[仕様](specification.md)、保守作業は[保守](maintenance.md)を参照してください。PostgreSQL 17とPrismaを使用します。
 
-## 保存形式と制約
+## 現行テーブル
 
-- 主キーはUUID、日時はUTCのtimestamptz(3)、表示時はAsia/Tokyoへ変換します。
-- 数量はinteger、仕入単価はDecimal(14,2)、在庫単価はDecimal(24,8)、取引金額はDecimal(24,2)。浮動小数点で金額を保存しません。
-- 工具コード・社員IDは一意。工具×保管場所の在庫行も一意です。
-- 実在庫は非負、0≦引当≦実在庫。単価は非負。安全在庫≦発注点≦目標在庫をDBでも確認します。
-- 取引数量は非ゼロ。入庫は正、出庫は負。ADJUSTMENTとREVERSALには理由が必要です。
-- 取引キーと取消元IDは一意。部分一意インデックスで工具ごとのOPEN発注候補を最大1件にします。
-- 履歴・監査ログはUPDATE/DELETE拒否トリガーで保護します。外部キーはRESTRICT削除です。
-
-カテゴリーと部門の候補制限はアプリの保存・検索検証で行います。DB列は文字列のままなので、直接SQLを使う運用ではアプリを通した入力制限とは別に取り扱う必要があります。
-
-## 主なテーブル
-
-| テーブル | 用途 |
+| テーブル | 内容・保持理由 |
 | --- | --- |
-| users | 社員ID、氏名、2ロール、有効状態、削除日時、パスワードハッシュ |
-| sessions | 生トークンではなくSHA-256、ユーザー、作成・最終利用・絶対期限 |
-| login_attempts | 社員IDハッシュごとの試行回数と15分の窓 |
-| tools | 品目コード・名称・カテゴリー・単位・単価・部門・棚番・状態 |
-| locations | 旧在庫の参照先と工具ごとの内部在庫参照先。独立した管理画面はなし |
-| stock_balances | 工具×参照先ごとの実在庫・引当 |
-| inventory_policies | 工具全体の安全在庫・発注点・目標在庫 |
-| inventory_transactions | 増減数量、操作種別、操作者、取消元、理由、確定残高・単価 |
-| reorder_candidates | 発注候補数とOPEN / CONVERTED / DISMISSED状態 |
-| tool_orders | 外部発注の記録、発注時の単位・入数・仕入単価、換算数量・入庫済数量・取消済数量 |
-| order_list_entries | 工具ごとに一意の発注リスト掲載行と、最新の掲載対象出庫への参照 |
-| audit_logs | 操作者、操作名、対象、変更前後などのJSON |
-| suppliers | 発注データの仕入先と参照整合性の保持 |
-| purchase_orders / purchase_order_items | 発注残集計に使用する既存構造。注文ワークフローの画面は未実装 |
+| `users` | 社員ID・氏名・ロール・有効状態・パスワードハッシュ・論理削除日時 |
+| `sessions` | ハッシュ化したトークン、有効期限・最終利用日時 |
+| `login_attempts` | ログイン／本人パスワード変更の試行回数制限 |
+| `tools` | 工具コード・名称・カテゴリー・発注単価・入数・部門・棚番・有効状態 |
+| `locations` | 在庫と履歴が参照する内部の棚識別子 |
+| `stock_balances` | 工具×内部棚の実在庫・引当数 |
+| `inventory_policies` | 工具ごとの発注ライン（reorder_point） |
+| `reorder_candidates` | 工具の発注数設定。OPENの数量を集計し、変更前の設定はDISMISSEDとして保持 |
+| `order_list_entries` | 工具ごとに1行の発注確認待ちと、きっかけになった出庫 |
+| `tool_orders` | 発注時点の数量・入数・発注単価、入庫済み・取消済みの数量 |
+| `inventory_transactions` | 入出庫・在庫修正・取消、当時の在庫数・単価・金額・計算根拠 |
+| `audit_logs` | 操作者、操作内容、変更前後、再送・入庫割当の情報、旧データ退避 |
 
-業務・認証・監査の全15テーブルを保持します。廃止済みの `machines` / `supplier_items` と `tools.manufacturer` / `tools.model` / `inventory_transactions.machine_id` は監査へ退避して削除済みです。`tools.unit` は既存の数量・履歴の意味を維持する内部項目として保持します。
+このほか、Prismaの適用履歴を `_prisma_migrations` で管理します。業務データと適用履歴はテストや整理の都合で初期化しません。
 
-新規工具には `@tool/<工具UUID>` の内部参照先を作成します。利用者の棚番は `tools.shelf_code` に保持し、棚番を変更しても在庫行・取引の参照先は変えません。
+## 数値と制約
 
-## 取引と確定値
+IDはUUID、日時はUTCのTIMESTAMPTZ(3)、画面はAsia/Tokyoです。数量は整数、価格・金額はDecimalです。
 
-通常入庫はRECEIVE、通常出庫はISSUE、取消は元の増減と逆符号のREVERSALです。工具編集で在庫を変更した場合は差分をADJUSTMENTとして記録します。独立した棚卸APIは提供しません。
+- 工具の発注単価：Decimal(14,2)、0以上または未設定。入数は1以上。
+- 履歴単価：Decimal(24,8)。符号付き金額：Decimal(24,2)。0円と未設定を区別します。
+- 在庫：0≦引当数≦実在庫。引当数は現在の画面で編集しませんが、残高保護に使うため保持します。
+- 発注ライン：0以上。安全在庫・目標在庫の列は廃止しました。
+- 発注：発注数×入数＝在庫換算数量。入庫済み・取消済みは0以上で、その合計は在庫換算数量以下。
+- 発注リストは工具ごとに一意、在庫残高は工具×内部棚で一意、リクエストキーと取消対象は一意です。
+- 入出庫履歴と監査はトリガーで更新・削除を禁止します。取消は元履歴への参照を持つ逆取引です。
 
-`on_hand_after` は当該在庫参照先の取引直後の実在庫、`unit_price` は取引時点の単価です。取消では元取引の単価を引き継ぎます。未知の旧単価は現在値で補いません。旧残高は対応する監査記録で確認できる場合のみ読み取り時に補います。
+工具の棚番は表示用です。既存の内部棚IDや履歴の参照先を変更しません。削除済みユーザーも過去履歴・監査の外部キーを維持します。
 
-通常取引の再送キーは `phase4:<UUID>`、工具編集の在庫修正は `tool-edit:<UUID>`。初期在庫登録にも専用キーがあります。在庫、取引、監査は同じトランザクションで保存し、いずれかが失敗すれば全体を戻します。
+履歴には発注単価・入数のスナップショットとcost_basisを保存します。MASTERは処理時点の工具情報、LEGACYは過去の保存単価から補完した金額です。過去の不明な入数を推測して再計算しません。
 
-出庫時に工具全体の実在庫が発注ライン＋発注済みの未入荷数を下回る場合、`order_list_entries` も同じトランザクションで保存します。tool_idを一意にし、最新の掲載対象出庫を参照します。入庫・取消で自動削除せず、発注確定・「済」の処理は今後追加します。
+## 追加移行
 
-## 主な監査イベント
+適用順とチェックサムを維持するため、適用済みSQLは削除・書き換えず保持します。初期スキーマには現在使わない表・列が含まれますが、すべての移行を適用した状態が現行スキーマです。
 
-| イベント | 内容 |
+2026-11-15の整理は次を実施します。
+
+| 移行 | 内容 |
 | --- | --- |
-| SESSION_LOGIN / SESSION_LOGOUT | セッションの生成・削除 |
-| USER_CREATED / USER_UPDATED | ユーザー変更。パスワード本文は記録しない |
-| TOOL_CREATED / TOOL_UPDATED | 工具と在庫方針の変更前後 |
-| INITIAL_STOCK_REGISTERED | 初期在庫の確定・再送判定 |
-| TOOL_STOCK_UPDATED | 工具編集での在庫修正、変更前後と取引 |
-| TOOL_ORDER_QUANTITY_UPDATED | 発注候補数の変更前後 |
-| INVENTORY_MUTATION | 通常取引の要求フィンガープリントと確定結果 |
-| ORDER_LIST_UPDATED | 出庫条件を満たした工具と、最新の対象出庫への参照 |
-| LEGACY_SCHEMA_ARCHIVED | 削除前の旧設備・仕入条件・メーカー・型番・取引の設備参照 |
+| `20261115010000_remove_unit_labels` | tools.unit・tools.order_unit・tool_orders.order_unit・inventory_transactions.stock_unitを削除。数量・入数・金額は維持 |
+| `20261115020000_cleanup_unused_schema` | 旧suppliers・purchase_orders・purchase_order_items、OrderStatus型、安全在庫・目標在庫を廃止 |
 
-工具変更履歴はこのうち工具変更に関するイベントから差分を生成します。監査表や取引表を表示件数に合わせて削除することはありません。
+後者は1トランザクションで対象をロックし、旧データを `PROJECT_SCHEMA_CLEANUP` の監査JSONへ退避します。退避するデータがあるのに既存ユーザーが存在しない場合は、削除せず失敗します。
 
-## 適用済み移行の構成
+旧ORDERED／PARTIALLY_RECEIVEDの未入庫明細は、`legacy-purchase-item:` で始まるリクエストキーのtool_ordersへ移します。当時の数量・入庫済み数・価格・依頼者を維持し、入数1として引き継ぎます。旧数量はもともと在庫数として集計していたため、現在の工具マスタの入数を掛けません。完了・取消・未発注分は退避だけを行います。既存のtool_orders、在庫、工具、ユーザー、履歴、過去の監査は書き換えません。
 
-| ディレクトリ | 内容 |
-| --- | --- |
-| 20261103000000_init | 業務テーブル、CHECK、部分一意索引、履歴保護 |
-| 20261103010000_auth | パスワード、セッション、ログイン試行 |
-| 20261105000000_tool_registration | 部門・工具単価 |
-| 20261105010000_two_roles | 2ロール化と対象セッション失効 |
-| 20261107000000_simple_inventory | 出庫の設備必須制約を解除 |
-| 20261107010000_tool_shelf | 工具ごとの棚番 |
-| 20261107020000_history_snapshots | 取引直後の残高・単価と索引 |
-| 20261110000000_remove_unused_legacy | 旧項目の監査退避、単価移行、未使用2テーブル・3カラムの削除 |
-| 20261110150000_user_soft_delete | users.deleted_atを追加。物理削除せず履歴との関連を保持 |
-| 20261111010000_order_list | 出庫条件を満たす工具の発注リスト。既存出庫は遡及しない |
+以前の設備・購買条件等は `LEGACY_SCHEMA_ARCHIVED` に退避済みです。これらの監査JSONは過去の事実として保持し、現行画面の編集項目には戻しません。
 
-既存の移行を書き換えず、変更は追加移行で管理します。PrismaスキーマだけからDBを作り直すとSQL専用のCHECK・部分索引・トリガーが欠けるため、既存移行を適用します。
+## 検証
 
-## 旧構造とユーザーの保持方針
-
-旧構造の削除は単一トランザクションで、旧設備・購買条件・メーカー・型番・取引の設備参照を `LEGACY_SCHEMA_ARCHIVED` へ退避します。退避対象があるのに操作者となる既存ユーザーがいない場合は移行を拒否します。工具の単価が未設定の場合だけ、有効な仕入先の優先購買条件の単価を工具へ移します。保存済み単価は0円を含めて変更しません。
-
-工具・在庫・ユーザー・認証・発注・過去取引の数量・日時・単価・確定残高・既存監査は保持します。古い設備付き要求の成功済み再送は、監査内のフィンガープリントと確定結果を使って互換性を維持します。新しい設備指定は拒否します。
-
-ユーザーの `deleted_at` が設定されている場合は、通常の一覧・検索・変更・認証の対象から除外します。過去の取引・監査の外部キーを保持するため、ユーザーを物理削除しません。削除日時追加のDDL自体は既存ユーザーの状態を変更しません。
-
-## 開発・テストデータ
-
-開発DBは `DATABASE_URL`、テストDBは `TEST_DATABASE_URL` を使います。テストはDB名にtestが含まれることを確認し、一時スキーマへ全移行を適用します。
-
-資格情報の初期設定はローカルの `toolstock_dev` と明示的な `ALLOW_LOCAL_SEED=yes` に制限します。パスワードはscrypt、16バイトsaltでハッシュ化します。元のパスワードをDB・監査・文書へ保存しません。
-
-Dockerの `postgres_data` ボリュームを保持します。`npm run db:backup` はローカル `toolstock_dev` の全体ダンプを `backups/` へ保存し、`pg_restore --list` とSHA-256で検証します。バックアップはコミットしません。`.local/development-snapshots/` に保管する古い検証用JSONは一部項目の記録であり、DB全体の復元用バックアップではありません。
-
-## バックアップと復元
-
-データを削除する移行の前に `npm.cmd run db:backup` を実行し、ダンプと検証情報を保持します。`npm.cmd run test:cleanup-migration` は旧構造からの退避・単価移行・履歴保持・削除後の構造・空DB適用・失敗時ロールバックとバックアップ接続先の制限を検証します。
-
-復元はアプリを停止して、バックアップ時点と同じコード・生成クライアントと組み合わせます。まず新しい検証専用DBへ復元し、工具件数、在庫残高、取引・監査を照合します。現在のDBへ無条件で上書きしません。次は既存のダンプを検証専用DBへ復元する例です。DB名とダンプのパスは実際の対象に合わせます。
-
-```powershell
-docker compose exec db createdb -U toolstock toolstock_restore_test
-docker compose cp backups/toolstock.dump db:/tmp/restore.dump
-docker compose exec db pg_restore -U toolstock -d toolstock_restore_test --no-owner --exit-on-error /tmp/restore.dump
-docker compose exec db psql -U toolstock -d toolstock_restore_test -c 'SELECT count(*) FROM tools;'
-```
-
-この復元例は今回の整理では実行していません。バックアップファイルの検証と、DBを実際に復元して業務データを照合する検証は別です。
-
-
-## 発注単位・使用金額の追加移行
-
-20261112010000_order_units はtoolsにorder_unitとunits_per_orderを追加し、既存工具の発注単位=在庫単位、入数1で初期化します。価格と数量は変更しません。
-
-20261112020000_inventory_amounts は在庫単価の桁を拡張し、amount、purchase_unit_price、cost_units_per_order、stock_unit、cost_basisを追加します。旧履歴はLEGACYとして保存済み単価×数量で金額だけ補完し、計算元の入数は推測しません。取引テーブルのDDLロックを保持する一つのトランザクション内で専用の履歴保護トリガーだけを停止し、新列補完後に再有効化します。旧数量・日時・単価は保持し、失敗時は停止状態を含めロールバックします。新取引はMASTERで計算根拠を保存します。
-
-20261112030000_tool_orders は軽量なtool_ordersと、入庫履歴のtool_order_id・receipt_units_per_orderを追加します。換算数量=発注数量×入数、入庫済+取消済≦換算数量、各数量非負をCHECKで保護します。旧purchase_orders等は保持します。
-
-取引金額は増減と同符号です。月別使用金額の集計例（未知価格件数は別に返す）：
-
-```sql
-SELECT date_trunc('month', t.created_at AT TIME ZONE 'Asia/Tokyo') AS month,
-       sum(-t.amount) AS usage_amount,
-       count(*) FILTER (WHERE t.amount IS NULL) AS missing_amount_count
-FROM inventory_transactions t
-LEFT JOIN inventory_transactions original ON original.id = t.reverses_id
-WHERE t.type = 'ISSUE' OR (t.type = 'REVERSAL' AND original.type = 'ISSUE')
-GROUP BY 1 ORDER BY 1;
-```
-
-LEGACYの集計値には当時の入数不明という制約があるため、MASTERと区別して扱います。月別画面は今回実装しません。
+移行テストは専用のTEST_DATABASE_URL上の一時スキーマで行います。空DB、旧構造・既存データ、未入庫発注の移行、価格0・未設定、退避できない場合のロールバック、履歴・監査の追記制約を検証します。ローカルDBへの適用前に全体バックアップを取り、適用前後で現行データを照合します。

@@ -1,6 +1,6 @@
 import { Messages, inputClass } from '@/components/masters';
-export default async function Login({searchParams}:{searchParams:Promise<{error?:string}>}) {
- const {error}=await searchParams;
+export default async function Login({searchParams}:{searchParams:Promise<{error?:string;password_changed?:string}>}) {
+ const {error,password_changed}=await searchParams;
  return <main className="mx-auto flex min-h-dvh w-full items-center justify-center px-4 py-8 sm:px-6">
  <section aria-labelledby="login-title" className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
   <header className="mb-6 text-center">
@@ -10,6 +10,7 @@ export default async function Login({searchParams}:{searchParams:Promise<{error?
   </header>
   <p className="mb-6 text-sm leading-relaxed text-slate-600">社員IDとパスワードを入力してください。共有端末では作業後にログアウトしてください。</p>
   <Messages search={{error}} />
+  {password_changed==='1'&&<p role="status" className="mb-4 text-sm text-green-800">パスワードを変更しました。新しいパスワードでログインしてください。</p>}
   <form method="post" action="/api/auth/login" className="grid gap-5 text-sm">
    <label className="grid gap-1">社員ID<input required name="employee_code" autoComplete="username" maxLength={32} className={inputClass} /></label>
    <label className="grid gap-1">パスワード<input required type="password" name="password" autoComplete="current-password" maxLength={128} className={inputClass} /></label>

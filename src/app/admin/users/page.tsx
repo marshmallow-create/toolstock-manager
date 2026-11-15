@@ -34,7 +34,7 @@ export default async function Users({searchParams}:{searchParams:Promise<Search>
    <form method="get" action="/admin/users" className="mb-3 flex flex-wrap items-end gap-3">
     <label className="grid w-full gap-1 sm:w-72">社員IDで検索<input name="employee_code" type="search" defaultValue={employeeCode} placeholder="社員IDの一部を入力" className={inputClass} /></label>
     <button className={buttonClass}>検索する</button>
-    <Link href="/admin/users" className="px-2 py-2 underline">検索をクリア</Link>
+    <Link href="/admin/users" className="ui-secondary">検索をクリア</Link>
    </form>
    <p role="status" className="mb-3 text-slate-600">{filteredUsers.length}件{employeeCode && `（全${users.length}件）`}{filteredUsers.length>0 && ` / ${(page-1)*pageSize+1}〜${Math.min(page*pageSize,filteredUsers.length)}件を表示`}</p>
    <div className="hidden grid-cols-[1fr_1fr_7rem_5rem_4rem] gap-3 border-b border-slate-300 bg-slate-50 px-3 py-2 font-bold sm:grid" aria-hidden="true"><span>社員ID</span><span>氏名</span><span>ロール</span><span>状態</span><span>操作</span></div>
@@ -58,9 +58,9 @@ export default async function Users({searchParams}:{searchParams:Promise<Search>
    </li>)}</ul>
    {filteredUsers.length===0 && <p className="py-6 text-center text-slate-600">{employeeCode?'該当する社員IDのユーザーはいません。':'登録済みユーザーはいません。'}</p>}
    {pageCount>1 && <nav aria-label="ユーザー一覧のページ切り替え" className="mt-3 flex items-center justify-between gap-3">
-    {page>1?<Link href={pageHref(page-1)} className="rounded border px-3 py-2">前へ</Link>:<span />}
+    {page>1?<Link href={pageHref(page-1)} className="ui-secondary">前へ</Link>:<span />}
     <span>{page} / {pageCount}ページ</span>
-    {page<pageCount?<Link href={pageHref(page+1)} className="rounded border px-3 py-2">次へ</Link>:<span />}
+    {page<pageCount?<Link href={pageHref(page+1)} className="ui-secondary">次へ</Link>:<span />}
    </nav>}
   </section>
  </WorkspaceShell>;

@@ -146,12 +146,12 @@ test('上限200件の一括登録と空欄数量の0扱い',async()=>{
 
 test('上限200件を一括変更し、空欄の在庫方針や在庫を保持する',async()=>{
  const first=await fixture.db.tool.findUniqueOrThrow({where:{tool_code:'LIMIT-0'}});
- await fixture.db.inventoryPolicy.update({where:{tool_id:first.id},data:{safety_stock:1,reorder_point:2,target_stock:3}});
+ await fixture.db.inventoryPolicy.update({where:{tool_id:first.id},data:{reorder_point:2}});
  const rows=Array.from({length:200},(_,index)=>({rowNumber:index+2,values:{tool_code:'LIMIT-'+index,name:'変更-'+index}}));
  const preview=await previewToolUpdate(fixture.db,auth,fixture.tokens.ADMIN,rows);assert.equal(preview.valid,true);
  assert.equal((await commitToolUpdate(fixture.db,auth,fixture.tokens.ADMIN,rows,preview.previewToken)).count,200);
  assert.equal(await fixture.db.tool.count({where:{tool_code:{startsWith:'LIMIT-'},name:{startsWith:'変更-'}}}),200);
  const policy=await fixture.db.inventoryPolicy.findUniqueOrThrow({where:{tool_id:first.id}});
- assert.equal(policy.safety_stock,1);assert.equal(policy.reorder_point,2);assert.equal(policy.target_stock,3);
+ assert.equal(policy.reorder_point,2);
  assert.equal(await fixture.db.inventoryTransaction.count({where:{tool_id_record:{tool_code:{startsWith:'LIMIT-'}}}}),0);
 });

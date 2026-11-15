@@ -8,7 +8,7 @@ import type { ImportPreviewRow } from '@/lib/masters/tool-import';
 import { formatPrice } from '@/lib/format-price';
 
 type Preview={count:number;valid:boolean;previewToken?:string;rows:(ImportPreviewRow&{before?:Record<string,string>;changes?:string[]})[]};
-const columns=[['tool_code','品目コード'],['name','品目名'],['category','カテゴリー'],['on_hand','在庫'],['reorder_point','発注ライン'],['order_quantity','発注数'],['unit_price','単価'],['department','部門'],['shelf_code','棚番'],['unit','在庫単位'],['order_unit','発注単位'],['units_per_order','入数']];
+const columns=[['tool_code','品目コード'],['name','品目名'],['category','カテゴリー'],['on_hand','在庫'],['reorder_point','発注ライン'],['order_quantity','発注数'],['unit_price','発注単価'],['units_per_order','入数'],['department','部門'],['shelf_code','棚番']];
 export function ToolImportForm() {
  const router=useRouter();
  const [mode,setMode]=useState<'create'|'update'>('create');
@@ -33,11 +33,13 @@ export function ToolImportForm() {
  }
  const shown=(field:string,value:string|undefined)=>value==null||value===''?'—':field==='category'?categoryLabel(value):field==='unit_price'?formatPrice(value):value;
  return <>
+  <section aria-label="共通テンプレート" className={'mb-3 max-w-4xl '+panelClass}>
+   <a href="/api/tools/import/template" className="ui-secondary inline-flex">登録・変更共通のExcelテンプレートをダウンロード</a>
+  </section>
   <section className={'mb-3 max-w-4xl '+panelClass}>
    <fieldset disabled={busy} className="mb-4 flex flex-wrap gap-3"><legend className="mb-2 font-semibold">操作を選択</legend>{(['create','update'] as const).map(value=><label key={value} className="ui-secondary inline-flex cursor-pointer items-center gap-2"><input type="radio" name="import-mode" value={value} checked={mode===value} onChange={()=>{setMode(value);setFile(null);setPreview(null);setError('');}} />{value==='create'?'新規登録':'一括変更'}</label>)}</fieldset>
    <h2 className="mb-2 text-xl font-bold">Excelでまとめて{verb}</h2>
    <p className="mb-3 text-slate-600">{updating?'品目コードで既存工具を照合します。変更する項目だけ入力してください。空欄は現在の値を保持します。':'テンプレートに新しい工具を入力し、内容を確認して登録します。'}</p>
-   <a href={updating?'/api/tools/import/template?mode=update':'/api/tools/import/template'} className="ui-secondary inline-flex">{verb}用Excelテンプレートをダウンロード</a>
    <form className="mt-5 grid gap-3" onSubmit={event=>{event.preventDefault();void send('preview');}}>
     <label className="grid gap-1">Excelファイル（.xlsx）<input key={mode} type="file" accept=".xlsx" required disabled={busy} className={inputClass} onChange={event=>{setPreview(null);setError('');setFile(event.target.files?.[0] ?? null);}} /></label>
     <p className="text-sm text-slate-600">最大200件・2MB。{updating?'未登録の品目コードやファイル内の重複は変更できません。0に変更する場合は0を入力してください。':'既存の品目コードやファイル内の重複は登録できません。'}</p>

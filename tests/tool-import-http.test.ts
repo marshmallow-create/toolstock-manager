@@ -42,7 +42,10 @@ test('Excel画面とテンプレートは管理者だけに許可し、作業者
   const page=await request('/tools/import',role);assert.equal(page.status,role==='ADMIN'?200:307);
   const template=await request('/api/tools/import/template',role);assert.equal(template.status,role==='ADMIN'?200:403);
   if(role==='WORKER'){assert.ok(page.headers.get('location')?.includes('/dashboard?denied=1'));continue;}
-  assert.ok((await page.text()).includes('内容を確認する'));assert.ok(template.headers.get('content-type')?.includes('spreadsheetml'));assert.match(template.headers.get('content-disposition')??'',/xlsx/);
+  const importHtml=await page.text();assert.ok(importHtml.includes('内容を確認する'));
+  assert.equal([...importHtml.matchAll(/href="\/api\/tools\/import\/template"/g)].length,1);
+  assert.ok(importHtml.indexOf('共通テンプレート')<importHtml.indexOf('<fieldset'));
+  assert.ok(template.headers.get('content-type')?.includes('spreadsheetml'));assert.match(template.headers.get('content-disposition')??'',/toolstock-template\.xlsx/);
   const book=new ExcelJS.Workbook();await book.xlsx.load(Buffer.from(await template.arrayBuffer()) as never);assert.equal(book.worksheets[0].getCell('A1').value,'品目コード');
  }
  const data=await workbook('WORKER-DENIED');
@@ -74,7 +77,7 @@ test('不正行・形式・サイズ・認証・Originを拒否する',async()=>
 test('変更テンプレートとAPIで変更前後を確認し、空欄保持・権限・再送・競合を検証する',async()=>{
  const template=await request('/api/tools/import/template?mode=update','ADMIN');assert.equal(template.status,200);
  const book=new ExcelJS.Workbook();await book.xlsx.load(Buffer.from(await template.arrayBuffer()) as never);
- const sheet=book.getWorksheet('工具変更');assert.ok(sheet);assert.equal(sheet.getCell('G2').numFmt,'0');
+ const sheet=book.getWorksheet('工具登録・変更');assert.ok(sheet);assert.equal(sheet.getCell('G2').numFmt,'0');
  const page=await (await request('/tools/import','ADMIN')).text();assert.ok(page.includes('一括変更'));
  assert.equal((await request('/api/tools/import/template?mode=update','WORKER')).status,403);
  assert.equal((await request('/api/tools/import/template?mode=bad','ADMIN')).status,400);
@@ -137,7 +140,7 @@ test('工具一覧Excelは認可・検索条件を守り無変更と編集後の
 });
 
 test('検索結果201件のExcel出力は全ページを200件と1件のZIPに分割する',async()=>{
- await fixture.db.tool.createMany({data:Array.from({length:201},(_,i)=>({tool_code:'ZIP-EXPORT-'+String(i).padStart(3,'0'),name:'分割出力',category:'DRILL',unit:'個'}))});
+ await fixture.db.tool.createMany({data:Array.from({length:201},(_,i)=>({tool_code:'ZIP-EXPORT-'+String(i).padStart(3,'0'),name:'分割出力',category:'DRILL'}))});
  const response=await request('/api/tools/export?tool_code=ZIP-EXPORT-&page=2','ADMIN');
  assert.equal(response.status,200);assert.equal(response.headers.get('content-type'),'application/zip');
  const zip=await JSZip.loadAsync(await response.arrayBuffer());

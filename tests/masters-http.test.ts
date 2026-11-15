@@ -7,11 +7,25 @@ import { databaseFixture } from './helpers/database';
 import { MastersService } from '../src/lib/masters/service';
 let fixture: Awaited<ReturnType<typeof databaseFixture>>, server: ChildProcess, origin: string;
 let toolId: string, locationId: string, logs = '';
-const base = { tool_code: 'HTTP-TOOL', name: 'HTTP架空ドリル', category: 'DRILL', unit: '本', safety_stock: '2', reorder_point: '5', target_stock: '10' };
+const base = { tool_code: 'HTTP-TOOL', name: 'HTTP架空ドリル', category: 'DRILL', reorder_point: '5' };
 const cookie = (role: string) => 'toolstock_session=' + fixture.tokens[role];
 const request = (path: string, role?: string, options: RequestInit = {}) => fetch(origin + path, { redirect: 'manual', ...options, headers: { ...(role ? { Cookie: cookie(role) } : {}), ...options.headers } });
 const post = (path: string, role: string | undefined, body: unknown, from?: string) => request(path, role, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: from ?? origin }, body: JSON.stringify(body) });
 const form = (path: string, role: string, body: Record<string, string>) => request(path, role, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: origin }, body: new URLSearchParams(body) });
+
+test('工具表の不足表示は在庫と発注済みの合計で判定し、状態コメントで行を伸ばさない',async()=>{
+ const service=new MastersService(fixture.db);
+ for(const [code,on_hand,on_order,low] of [['DESIGN-EQUAL',6,4,false],['DESIGN-LOW',6,3,true],['DESIGN-ZERO-COVERED',0,10,false],['DESIGN-ZERO',0,0,true]] as const){
+  const tool=await service.createTool(fixture.tokens.ADMIN,{tool_code:code,name:'配色確認工具',category:'DRILL',on_hand,reorder_point:10});
+  if(on_order)await fixture.db.toolOrder.create({data:{tool_id:tool.id,created_by:fixture.users.ADMIN,request_key:randomUUID(),order_quantity:on_order,units_per_order:1,stock_quantity:on_order}});
+  const html=await (await request('/dashboard?tool_code='+code,'ADMIN')).text();
+  const row=[...html.matchAll(/<tr\b[^>]*>.*?<\/tr>/gs)].map(m=>m[0]).find(r=>r.includes('href="/tools/'+tool.id+'"'));assert.ok(row);
+  assert.match(row,new RegExp('data-needs-order="'+low+'"'));
+  assert.equal(row.includes('tool-stock--zero'),on_hand===0);
+  assert.equal(row.includes('tool-stock--low'),low&&on_hand!==0);
+  assert.doesNotMatch(row,/>在庫なし<|>要発注</);
+ }
+});
 
 test('廃止したデータ管理の画面・APIは全利用者に404を返しメニューにも表示しない', async () => {
  for (const role of [undefined, 'WORKER', 'ADMIN']) {
@@ -68,7 +82,7 @@ test('マスタAPIの書込権限、Origin、入力検証、重複コード、�
  }
  assert.equal((await post('/api/tools', 'ADMIN', base, 'https://evil.invalid')).status, 403);
  assert.equal((await post('/api/tools', 'ADMIN', base)).status, 409);
- assert.equal((await post('/api/tools', 'ADMIN', { ...base, tool_code: 'INVALID', safety_stock: '1e2' })).status, 400);
+ assert.equal((await post('/api/tools', 'ADMIN', { ...base, tool_code: 'INVALID', reorder_point: '1e2' })).status, 400);
  assert.equal((await request('/api/tools/not-uuid', 'ADMIN')).status, 400);
  assert.equal((await request('/api/tools/' + randomUUID(), 'ADMIN')).status, 404);
  assert.equal((await request('/api/masters/users', 'ADMIN')).status, 404);
@@ -105,7 +119,7 @@ test('作業者のメニュー・登録画面・フォーム送信から工具�
  const detail = await new MastersService(fixture.db).toolDetail(fixture.tokens.ADMIN, tool.id);
  assert.equal(detail.on_hand, 6); assert.equal(detail.order_quantity, 3); assert.equal(detail.policy?.reorder_point, 5);
  assert.equal(detail.unit_price, '123.45'); assert.equal(detail.department, '17361'); assert.equal(detail.shelf_code, 'W-01');
- assert.equal((await post('/api/tools/' + tool.id, 'WORKER', { ...base, tool_code: tool.tool_code, unit: detail.unit, active: true })).status, 403);
+ assert.equal((await post('/api/tools/' + tool.id, 'WORKER', { ...base, tool_code: tool.tool_code, active: true })).status, 403);
  assert.equal((await post('/api/tools', undefined, { ...base, tool_code: 'ANONYMOUS' })).status, 401);
  assert.equal((await post('/api/tools', 'WORKER', { ...base, tool_code: 'BAD-ORIGIN' }, 'https://evil.invalid')).status, 403);
 });
@@ -169,7 +183,9 @@ test('HTML tool location and initial-stock forms save and redirect with 303', as
 test('新規登録画面の一覧と同じ項目から登録しカテゴリー・部門・単価・在庫・棚番を一覧に表示する', async () => {
  const page = await request('/tools/new', 'ADMIN'); assert.equal(page.status, 200);
  const html = await page.text();
- for (const label of ['品目コード', '品目名', 'カテゴリー', '在庫', '発注済み', '発注ライン', '発注数', '単価', '部門', '棚番']) assert.ok(html.includes(label), label);
+ assert.doesNotMatch(html, /在庫単位|発注単位/);
+ assert.ok(html.indexOf('name="unit_price"')<html.indexOf('name="units_per_order"'));
+ for (const label of ['品目コード', '品目名', 'カテゴリー', '在庫', '発注済み', '発注ライン', '発注数', '発注単価', '部門', '棚番']) assert.ok(html.includes(label), label);
  assert.ok(!html.includes('工具全体の在庫方針'));
  const created = await form('/api/tools', 'ADMIN', { tool_code: 'LIST-FORM', name: '一覧形式の工具', category: 'DRILL', on_hand: '17', reorder_point: '4', order_quantity: '6', unit_price: '456.78', department: '17362', shelf_code: 'SHELF-FORM' });
  assert.equal(created.status, 303);
@@ -180,8 +196,8 @@ test('新規登録画面の一覧と同じ項目から登録しカテゴリー�
  assert.equal(row.category, 'DRILL'); assert.equal(row.department, '17362'); assert.deepEqual(row.shelf_codes, ['SHELF-FORM']);
  const list = await request('/dashboard?tool_code=LIST-FORM', 'ADMIN');
  const listHtml = await list.text();
+ assert.doesNotMatch(listHtml, /在庫単位|発注単位|入数|<small\b/);
  for (const value of ['一覧形式の工具', '17362', 'SHELF-FORM', '¥457']) assert.ok(listHtml.includes(value));
- assert.match(listHtml, /<td\b[^>]*>¥457<small\b/);
  assert.doesNotMatch(listHtml, /¥456\.78/);
  const worker = await request('/api/tools?tool_code=LIST-FORM', 'WORKER');
  assert.equal((await worker.json()).tools[0].unit_price, '456.78');
@@ -246,6 +262,7 @@ test('編集フォームの在庫・発注ライン・発注数が保存され�
  const tool = await service.createTool(fixture.tokens.ADMIN, { ...base, tool_code: 'EDIT-FIELDS', on_hand: 7, order_quantity: 3 });
  const html = await (await request('/tools/' + tool.id + '/edit', 'ADMIN')).text();
  const main = html.slice(html.indexOf('<main'), html.indexOf('</main>'));
+ assert.doesNotMatch(main, /在庫単位|発注単位|name="unit"|name="order_unit"/);
  for (const [field, value] of [['on_hand', '7'], ['order_quantity', '3'], ['reorder_point', '5']]) assert.match(main, new RegExp('name="' + field + '"[^>]*value="' + value + '"'));
  for (const removed of ['メーカー（任意）', '型番（任意）', '数量単位（例：本、個）', '工具全体の在庫方針', '工具番号は変更できません。']) assert.ok(!main.includes(removed));
  const inputs = Object.fromEntries([...main.matchAll(/<input\b[^>]*>/g)].map(([tag]) => [tag.match(/name="([^"]+)"/)?.[1], tag.match(/value="([^"]*)"/)?.[1] ?? '']).filter(([name]) => name));
@@ -254,7 +271,7 @@ test('編集フォームの在庫・発注ライン・発注数が保存され�
  assert.equal(response.status, 303); assert.equal(new URL(response.headers.get('location')!).pathname, '/tools/' + tool.id);
  const detail = await service.toolDetail(fixture.tokens.ADMIN, tool.id);
  assert.equal(detail.on_hand, 9); assert.equal(detail.order_quantity, 8); assert.equal(detail.policy?.reorder_point, 4);
- assert.ok(!('manufacturer' in detail)); assert.ok(!('model' in detail)); assert.equal(detail.unit, base.unit);
+ assert.ok(!('manufacturer' in detail)); assert.ok(!('model' in detail)); assert.ok(!('unit' in detail)); assert.ok(!('order_unit' in detail));
 });
 
 test('カテゴリーと部門は指定候補の選択式で候補外の保存を拒否する', async () => {
@@ -279,7 +296,7 @@ test('入出庫・工具情報・工具変更履歴の順に表示し、変更�
  const service = new MastersService(fixture.db);
  const input = { ...base, tool_code: 'CHANGE-HISTORY', on_hand: 5, unit_price: '876.54', shelf_code: 'A-01' };
  const tool = await service.createTool(fixture.tokens.ADMIN, input);
- const saved = await form('/api/tools/' + tool.id, 'ADMIN', { tool_code: tool.tool_code, name: tool.name, category: tool.category, unit: tool.unit, active: 'true', shelf_code: 'B-02', unit_price: '987.65', reorder_point: '5' });
+ const saved = await form('/api/tools/' + tool.id, 'ADMIN', { tool_code: tool.tool_code, name: tool.name, category: tool.category, active: 'true', shelf_code: 'B-02', unit_price: '987.65', reorder_point: '5' });
  assert.equal(saved.status, 303);
  for (const role of ['ADMIN', 'WORKER']) {
   const response = await request('/tools/' + tool.id, role); assert.equal(response.status, 200);
@@ -290,6 +307,6 @@ test('入出庫・工具情報・工具変更履歴の順に表示し、変更�
   for (const label of ['変更日時', '変更内容', '操作者', 'A-01', 'B-02', 'ADMIN']) assert.ok(history.includes(label), label);
   assert.doesNotMatch(history, /安全在庫|目標在庫|数量単位|メーカー|型番/);
   assert.match(history, /\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}/);
-  assert.ok(history.includes('単価：877 → 988')); assert.doesNotMatch(history, /876\.54|987\.65/);
+  assert.ok(history.includes('発注単価：877 → 988')); assert.doesNotMatch(history, /876\.54|987\.65/);
  }
 });

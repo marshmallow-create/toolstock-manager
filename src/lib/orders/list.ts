@@ -5,7 +5,7 @@ import { integer, type Input } from '../masters/validation';
 
 const entrySelect = {
  id: true,
- tool_id_record: { select: { id: true, tool_code: true, name: true, category: true, department: true, unit_price: true, unit:true, order_unit:true, units_per_order:true } },
+ tool_id_record: { select: { id: true, tool_code: true, name: true, category: true, department: true, unit_price: true, units_per_order:true } },
  trigger_transaction_id_record: { select: {
   created_at: true,
   actor_user_id_record: { select: { name: true, employee_code: true } },

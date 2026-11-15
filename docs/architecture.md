@@ -1,86 +1,63 @@
-# 構成
+﻿# 構成
 
-業務仕様は[現行仕様書](specification.md)、起動・検証は[README](../README.md)を参照してください。
+業務上の基準は[仕様](specification.md)、保存構造は[DB](database.md)、起動手順は[README](../README.md)です。
 
-## 技術構成
+## 構成と責務
 
-Next.js 16.1.6 App Router、React 19.2.4、TypeScript 5.9.3、Tailwind CSS 4.1.18、Prisma 7.3.0、pg、PostgreSQL 17を使用します。依存はpackage-lock.jsonで固定します。外部の認証・データサービスは使いません。
+Next.js 16.1.6 App Router、React 19.2.4、TypeScript 5.9.3、Tailwind CSS 4.1.18、Prisma 7.3.0、PostgreSQL 17を使用します。DBにはpgアダプターで接続します。
 
 ```text
 ブラウザ
-  ├─ Server Components：画面と権限別データ
-  └─ Client Components：メニュー・数量変更と見込み表示
-            ↓ HTMLフォーム / JSON
-Next.js Route Handlers
-            ↓ 認証・認可・Origin確認
-AuthService / MastersService / InventoryService
-            ↓ Prisma + pgアダプター
-ローカルPostgreSQL
+  ↓ Server Components / Client Components
+Next.js Route Handlers（HTMLフォーム・JSON・multipart）
+  ↓ セッション認証・権限・Origin確認
+AuthService / MastersService / InventoryService / 発注処理
+  ↓ Prisma + pg
+PostgreSQL
 ```
 
-## ディレクトリと責務
-
-| 場所 | 内容 |
+| 場所 | 責務 |
 | --- | --- |
-| `src/app/` | ページ、APIルート、共通CSS |
-| `src/components/workspace-shell.tsx` | 認証済み画面の枠・ログイン情報・戻る導線 |
-| `src/components/dashboard-menu.tsx` | マイページの開閉メニュー |
-| `src/components/tools-list.tsx` | 工具検索・ページ切り替え |
-| `src/components/tool-stock-table.tsx` | 一覧と詳細で共通の工具表 |
-| `src/components/masters.tsx` | 工具登録・変更、共通入力・通知 |
-| `src/components/tool-option-fields.tsx` | カテゴリー・部門の選択欄 |
-| `src/components/inventory-form.tsx` | 入庫・出庫の数量と見込み |
-| `src/components/inventory.tsx` | 入出庫履歴の表・日時・取消フォーム |
-| `src/lib/auth/` | パスワード、セッション、権限、ユーザー管理、リクエスト処理 |
-| `src/lib/masters/` | 工具の検証・参照・保存・初期在庫・変更履歴 |
-| `src/lib/masters/tool-import.ts` | 一括行検証・重複検出・全件一括保存 |
-| `src/lib/masters/tool-update.ts` | 既存工具の一括変更検証・変更前後の確認・指紋照合・全件一括変更 |
-| `src/lib/masters/write.ts` | 通常変更・一括変更で共用する `updateToolInTransaction` と在庫・候補・監査の保存 |
-| `src/lib/masters/tool-workbook.ts` | 登録・変更モードの.xlsx生成・解析、yauzlとsaxesによる展開量・XML検査 |
-| `src/lib/masters/import-request.ts` | 通常の入力サイズ上限から分離したmultipart受付 |
-| `src/components/tool-import-form.tsx` | 登録・変更の切り替え、ファイル選択・変更前後の確認表・確定。Excel処理はサーバーで行う |
-| `src/lib/inventory/` | 入出庫・取消・履歴の検証と処理 |
-| `src/lib/orders/list.ts` | 発注リストのページ切り替えと権限付き参照 |
-| `src/app/orders/` / `src/app/api/orders/` | 発注リスト画面と参照API |
-| `src/lib/tool-options.ts` | カテゴリーと部門の候補、表示名と保存コードの対応 |
-| `src/lib/db.ts` | DBクライアントの生成・開発時キャッシュ |
-| `prisma/` | スキーマ・追加移行・架空シード |
-| `scripts/` | テスト用TypeScript実行、開発用資格情報の初期設定 |
-| `tests/` | 権限・移行・DB・認証・工具・入出庫・HTTPテスト |
+| `src/app/` | 画面、API、共通CSS |
+| `src/components/workspace-shell.tsx` | 共通枠、上段のブランド・ログイン情報・ログアウト |
+| `src/components/dashboard-menu.tsx` | 開閉メニュー、残っている発注の件数警告 |
+| `src/components/tools-list.tsx` / `tool-stock-table.tsx` | 検索・ページ切り替え、共通の工具表 |
+| `src/components/masters.tsx` | 工具登録・編集、共通入力・保存通知 |
+| `src/components/inventory-form.tsx` / `inventory.tsx` | 入出庫の数量・見込み、履歴表・取消 |
+| `src/components/order-form.tsx` | 発注済みへの登録・一覧の取消 |
+| `src/components/tool-import-form.tsx` | 共通テンプレート、モード選択、確認・一括確定 |
+| `src/lib/auth/` | 認証、ユーザー管理、パスワード、権限、HTTP共通処理 |
+| `src/lib/masters/` | 工具の検証・検索・変更・初期在庫・変更履歴・Excel |
+| `src/lib/inventory/` | 在庫処理、履歴検索、金額計算、発注ライン判定 |
+| `src/lib/orders/` | 発注一覧、確認・取消の書き込み |
+| `src/lib/tool-options.ts` / `format-price.ts` | 選択候補、表示名、金額表示 |
+| `src/lib/db.ts` | Prisma生成クライアントの生成と開発時キャッシュ |
+| `prisma/` | 現行スキーマ、適用順を保つ移行、架空シード |
+| `scripts/` | 検証実行、バックアップ、ローカル資格情報設定 |
+| `tests/` | 専用DBでの移行・業務・HTTPテスト |
 
-ログインは独立した中央カードを使用します。その他の描画ページはWorkspaceShellを使います。独立した履歴詳細画面はなく、取消操作は履歴一覧内にあります。
+## 認証と入力
 
-## サーバーの入口
+画面は `pageUser()`、サービスはAuthServiceで認証・認可します。発注の確認は `orders:confirm` を両ロールへ、発注済みの未入庫取消は `orders:manage` を管理者へ許可します。
 
-画面は `pageUser()`、APIはAuthServiceで実セッションと権限を確認します。`mutate()` はOrigin、8KiBの入力サイズ、JSON/フォーム形式、応答と303転送を共通処理します。読み取り結果はキャッシュさせません。
+`mutate()` がOrigin、JSON／フォーム、入力サイズ8KiB、エラー応答、303転送を共通処理します。Excelのmultipartは別途ファイル上限を検査します。APIの読み取りはno-storeです。監査JSONや資格情報をそのまま画面へ渡しません。
 
-サービス層は画面とAPIで共用します。認可済みDTOだけを画面へ渡し、監査のJSONや資格情報をそのままクライアントへ渡しません。単価の表示と範囲検索は両ロールに `prices:read` で許可し、工具情報の変更権限とは分離します。
+DBクライアントは接続URLと生成クライアントのコンストラクターが一致する場合だけ再利用します。スキーマ変更後に古い生成クライアントを使い続けないための処理です。
 
-金額は表示時だけ1円単位に四捨五入し、小数を表示しません。DBの `Decimal(14,2)` と小数部2桁以内の入力を保持します。Excelテンプレートの単価列も `numFmt: '0'` とし、解析では小数を切り捨てません。
+## 保存と競合
 
-管理者専用の `/tools/import` は新規登録・既存変更を同じ画面で選びます。テンプレートは同じ9列の「工具登録」「工具変更」で、変更は品目コードをキーに空欄以外だけを反映します。部門・棚番の空欄も保持し、0は明示的な変更値です。両モードとも200件・2MiBを上限とします。テンプレートGETの `mode=update` は `toolstock-update.xlsx`、取り込みPOSTはmultipartの `mode`・`action`・`file` と変更確定用 `previewToken` を受け取ります。mode省略時はcreateです。
+工具保存・ユーザー管理は `authorized()`、入出庫・発注は `inventoryAuthorized()` を通します。保存と監査は同一トランザクションです。
 
-## トランザクションと競合
+入出庫・発注はユーザーロック、リクエストキーのアドバイザリロック、工具行ロックを使用します。在庫は変更前の残高・引当数を条件に更新します。工具編集は `expected_on_hand` を照合します。入出庫系のロック待ちは3秒、トランザクション上限は10秒です。競合は409として再確認を求めます。
 
-- 管理・工具保存は `AuthService.authorized()` を使い、ユーザー管理との整合性を保ちながら認可・保存・監査をまとめます。
-- 工具変更は工具行をロックします。在庫修正は確認時の残高を条件に更新し、フォームの変更前在庫とも照合します。
-- Excel一括変更は `tool-update.ts` で変更前後を確認し、工具・全在庫・在庫方針・OPEN候補と解析したファイルの指紋を `previewToken` で照合します。確定時の状態が異なる場合は409で再確認を求めます。全行を1トランザクションにまとめ、共通の `updateToolInTransaction` で在庫差分・発注候補・監査・工具変更履歴を保存します。途中失敗は全件を戻します。
-- 入出庫は `inventoryAuthorized()` を使い、ユーザーの共有ロック、リクエストキーのアドバイザリロック、工具行ロック、在庫更新の順で処理します。
-- 入出庫のロック待ち上限は3秒、業務トランザクションの実行上限は10秒。同じ要求の再送は成功済み結果を返します。
-- 既存の内部在庫参照先と履歴IDは保持します。棚番の表示変更で在庫を別の行へ移しません。
+入庫は古い発注から消し込み、割り当てた発注IDと数量を監査に記録します。取消はその割り当てを復元します。入出庫・監査は追記型です。元取引の数量・金額を書き換えません。
 
-## 工具変更履歴
+Excelの確認は保存せず、変更時には工具・残高・発注ライン・発注数と入力の指紋を `previewToken` にします。確定時に再照合し、全行を共通の工具保存処理で更新します。
 
-`src/lib/masters/change-history.ts` が `TOOL_UPDATED`、`TOOL_STOCK_UPDATED`、`TOOL_ORDER_QUANTITY_UPDATED` を読み、表示用の差分へ変換して最新3件を返します。単価の金額は権限に応じて除きます。同じ保存に対する別イベントを1行へ統合する実装ではありません。
+## 互換性と整理
 
-## 今後の変更時に確認する箇所
+現行の発注集計は `tool_orders` に統一しています。旧購買テーブル・安全在庫・目標在庫は追加移行で監査へ退避します。適用済みの移行と過去スキーマの移行テストは保持します。
 
-| 変更内容 | 同時に確認するもの |
-| --- | --- |
-| 画面・入力欄 | 仕様書、共通コンポーネント、サーバー検証、HTTPテスト |
-| ロール・権限 | permissions.ts、ページ、API、サービスの認可、権限テスト |
-| カテゴリー・部門 | tool-options.ts、保存・検索の検証、既存値の扱い |
-| 在庫・取消 | DB制約、ロック順、再送、監査、単価・残高スナップショット |
-| DB構造 | 追加移行、生成クライアント、テストDDL、既存データ互換 |
+旧Excelの9列・12列、旧「単価」見出し、旧モード別シートを読み込めます。成功済みの旧要求は監査を使って再送できます。新しい設備指定・旧発注書への入庫指定は受け付けません。
 
-`.cache/` はテストバンドルや検証用の一時ファイルです。削除後は必要に応じて再生成されます。`.next/` は本番ビルドと開発サーバーが使用します。キャッシュを除去するときは対象のサーバー・検証を停止し、稼働中のファイルを削除しません。
+在庫方針は発注ラインだけを保持します。内部の棚・引当数・入数スナップショットは、在庫保護と履歴・計算の整合性に必要なので維持します。

@@ -1,33 +1,30 @@
-# ToolStock Manager
+﻿# ToolStock Manager
 
-1工場の切削工具について、工具登録・在庫・入出庫・履歴・発注リスト・ユーザーを管理するWebアプリです。
-現行の画面・権限・運用手順は以下の文書に集約しています。
+1工場の切削工具を管理するローカルWebアプリです。工具登録・在庫・入出庫履歴・発注確認・Excel一括登録／変更・ユーザー管理を提供します。
 
-## 資料
+## 現行資料
 
-| ファイル | 内容 |
+| 資料 | 内容 |
 | --- | --- |
-| [現行仕様書](docs/specification.md) | 画面、入力項目、権限、在庫、履歴、未実装範囲 |
-| [構成](docs/architecture.md) | コードの責務と変更時の確認箇所 |
-| [DB設計](docs/database.md) | データ、制約、移行、監査 |
-| [Excel一括登録・変更](docs/excel-import.md) | モード別テンプレート、入力制限、変更前後の確認・確定 |
-| [保守](docs/maintenance.md) | 開発ルール、整理方針、検証結果 |
+| [仕様](docs/specification.md) | 画面、権限、在庫・金額・発注の計算 |
+| [構成](docs/architecture.md) | コードの責務、処理と競合制御 |
+| [DB](docs/database.md) | 現行テーブル、制約、整理移行 |
+| [Excel](docs/excel-import.md) | 共通テンプレート、確認・確定、出力 |
+| [保守](docs/maintenance.md) | 検証、バックアップ、整理記録 |
 
 ## 必要環境
 
-- Node.js 22.12以上、npm
-- Docker Desktop / Docker Compose v2（ローカルPostgreSQL用）
-- Windows PowerShellでは `npm.cmd` を使用
+Node.js 22.12以上、npm、Docker Desktop / Docker Compose v2を使用します。Windows PowerShellでは `npm.cmd` を使用してください。依存バージョンは `package-lock.json` で固定しています。
 
 ## 初回セットアップ
 
-既存の `.env` がある場合は上書きしません。
+既存の `.env` と業務データは上書きしません。新規環境では次を実行します。
 
 ```powershell
 if (-not (Test-Path -LiteralPath '.env')) { Copy-Item .env.example .env }
 npm.cmd ci --cache .npm-cache
-npm.cmd run db:generate
 docker compose up -d --wait
+npm.cmd run db:generate
 npm.cmd run db:migrate
 $env:ALLOW_LOCAL_SEED = 'yes'
 npm.cmd run db:seed
@@ -36,25 +33,25 @@ Remove-Item Env:ALLOW_LOCAL_SEED
 npm.cmd run dev
 ```
 
-http://127.0.0.1:3000/ を開きます。DBもWebもローカル接続です。`APP_ORIGIN` とアクセスURLのオリジンを一致させてください。
+http://127.0.0.1:3000/ を開きます。`APP_ORIGIN` はアクセス先と一致させます。DBは127.0.0.1にのみ公開します。
 
-新規DBのシードは架空の工具とA001（作業者）、ADMIN001（管理者）を作成します。既存行の再初期化や削除済みユーザーの復活は行いません。既存環境ではシード再投入は不要です。初回パスワードは `.local/dev-credentials.json` に保存されます。資格情報は文書・Git・ログへ転記しないでください。
+シードは架空の工具とA001（作業者）・ADMIN001（管理者）を作成します。初期パスワードは `.local/dev-credentials.json` に保存されます。既存環境ではシードの再投入は不要です。資格情報はGit・文書・ログへ転記しません。
 
-## 通常の起動・停止
+## 通常起動・停止
 
 ```powershell
 docker compose up -d --wait
 npm.cmd run dev
-# 本番モードで確認する場合
+# 本番モードの確認
 npm.cmd run build
 npm.cmd start
 ```
 
-開発モードと本番モードは同じポートで同時起動しません。WebはCtrl+C、DBは `docker compose stop` で停止します。DBボリュームを削除する操作は、通常の停止手順に含めません。
+同じポートで開発モードと本番モードを同時起動しません。WebはCtrl+C、DBは `docker compose stop` で停止します。通常の停止でDBボリュームを削除しません。
 
-## 検証
+## 検証とDB更新
 
-`.env` の `TEST_DATABASE_URL` に、開発DBとは別のテストDBを設定します。初回だけ以下で作成します。
+`.env` の `TEST_DATABASE_URL` に開発DBとは別のテストDBを指定します。初回だけ作成してください。
 
 ```powershell
 docker compose exec db createdb -U toolstock toolstock_test
@@ -63,16 +60,10 @@ npm.cmd run typecheck
 npm.cmd test
 ```
 
-テストはテストDBの一時スキーマを使用し、完了時に削除します。`npm.cmd test` には権限・移行・DB・認証・工具・在庫・Excel・HTTPテストと本番ビルドが含まれます。実行時の結果は[保守](docs/maintenance.md)を参照してください。
+テストは専用DBの一時スキーマを使用します。全体テストには移行・権限・認証・在庫・発注・Excel・HTTP・本番ビルドが含まれます。
 
-## 維持するファイル
+既存DBの更新は `npm.cmd run db:backup` でバックアップを取得後、`npm.cmd run db:migrate` を実行します。適用済みSQLは編集せず追加移行を使います。詳細と今回の検証結果は[保守](docs/maintenance.md)を参照してください。
 
-工具・在庫・履歴・ユーザーは通常の業務画面から操作します。廃止した「データ管理」の表形式編集画面・専用APIは提供しません。
+## データと一時ファイル
 
-管理者は `/tools/import` でExcelの新規一括登録と既存工具の一括変更を切り替えられます。1回200件・2MiBまでで、変更は既存の品目コードを指定し、空欄を保持して入力した値だけを反映します。0は0への変更、部門・棚番の空欄は保持です。変更前後を確認して確定し、確認後に対象データやファイルが変わった場合は409となるため再確認します。全件をまとめて保存し、失敗時は全件を戻します。操作・APIの詳細は[Excel一括登録・変更](docs/excel-import.md)を参照してください。
-
-単価は画面とExcelテンプレートで1円単位に四捨五入して表示します。小数部2桁以内の入力とDBの `Decimal(14,2)` は維持し、表示に合わせて保存値を整数化しません。
-
-`src/`、`tests/`、`prisma/`、`scripts/`、npmのロックファイル、環境設定を機能追加の基盤として維持します。適用済みのSQL移行は書き換えず、必要な変更を追加移行で行います。
-
-`.env`、`.local/`、DBボリューム、バックアップは実行環境のデータです。不要ファイルの整理対象に含めません。`.cache/` はテスト等で再生成される一時領域です。
+`.env`、`.local/dev-credentials.json`、`backups/`、DBボリュームは実行環境のデータです。Gitには含めません。`.cache/` は検証時の再生成領域、`.next/` はビルド・開発サーバー用です。稼働中のファイルは削除しません。完了済みの検証画像・ログ・作業メモは現行仕様へ集約して整理します。

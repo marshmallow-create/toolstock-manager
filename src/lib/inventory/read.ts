@@ -6,8 +6,8 @@ import { categoryAliases } from '../tool-options';
 import { calendarDate, optionalId } from './validation';
 import type { Input, HistoryItem, InventoryResult } from './types';
 const transactionSelect={
- id:true,type:true,quantity:true,reason:true,created_at:true,reverses_id:true,idempotency_key:true,on_hand_after:true,unit_price:true,amount:true,stock_unit:true,cost_basis:true,
- tool_id_record:{select:{id:true,tool_code:true,name:true,category:true,unit:true,active:true}},
+ id:true,type:true,quantity:true,reason:true,created_at:true,reverses_id:true,idempotency_key:true,on_hand_after:true,unit_price:true,amount:true,cost_basis:true,
+ tool_id_record:{select:{id:true,tool_code:true,name:true,category:true,active:true}},
  location_id_record:{select:{id:true,location_code:true,name:true,active:true}},
  actor_user_id_record:{select:{id:true,employee_code:true,name:true,active:true}},
  inventory_transactions_reverses_id_children:{select:{id:true}},

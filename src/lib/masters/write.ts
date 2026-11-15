@@ -58,7 +58,6 @@ export async function updateToolInTransaction(tx: Prisma.TransactionClient, acto
   if (!before) throw new AuthError(404, '工具が見つかりません');
   const data = toolData(input, false, before.shelf_code);
   unchangedCode(input, 'tool_code', before.tool_code);
-  if (data.unit !== before.unit && (await tx.stockBalance.count({ where: { tool_id: id } }) || await tx.inventoryTransaction.count({ where: { tool_id: id } }))) throw new AuthError(409, '在庫・履歴がある工具の単位は変更できません。別の工具として登録してください');
   const previousPolicy = await tx.inventoryPolicy.findUnique({ where: { tool_id: id } });
   const tool = await tx.tool.update({ where: { id }, data });
   if (quantity !== undefined) {

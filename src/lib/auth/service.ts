@@ -58,6 +58,27 @@ export class AuthService {
   await this.authenticate(token,'users:manage');
   return this.db.user.findMany({where:{deleted_at:null},select:selectUser,orderBy:{employee_code:'asc'}});
  }
+ async changePassword(token:string|undefined,input:{current_password:unknown;password:unknown;password_confirmation:unknown}) {
+  await this.authenticate(token,'password:change');
+  const {current_password,password,password_confirmation}=input;
+  if(typeof current_password!=='string'||!current_password||current_password.length>MAX_PASSWORD_LENGTH)throw new AuthError(400,'現在のパスワードを確認してください');
+  if(typeof password!=='string'||password.length<MIN_PASSWORD_LENGTH||password.length>MAX_PASSWORD_LENGTH)throw new AuthError(400,PASSWORD_LENGTH_ERROR);
+  if(password!==password_confirmation)throw new AuthError(400,'新しいパスワードと確認用のパスワードが一致しません');
+  const result=await this.authorized(token,['password:change'],async(tx,actor)=>{
+   const key=tokenHash('password-change:'+actor.id),now=this.clock();
+   let attempt=await tx.loginAttempt.upsert({where:{key},create:{key,attempts:1,started_at:now},update:{attempts:{increment:1}}});
+   if(now.getTime()-attempt.started_at.getTime()>=15*60_000)attempt=await tx.loginAttempt.update({where:{key},data:{attempts:1,started_at:now}});
+   if(attempt.attempts>5)return {error:new AuthError(429,'試行回数が上限に達しました。15分後に再試行してください')};
+   const user=await tx.user.findUniqueOrThrow({where:{id:actor.id}});
+   if(!await verifyPassword(current_password,user.password_hash))return {error:new AuthError(400,'現在のパスワードを確認してください')};
+   await tx.user.update({where:{id:actor.id},data:{password_hash:await hashPassword(password)}});
+   await tx.session.deleteMany({where:{user_id:actor.id}});
+   await tx.loginAttempt.delete({where:{key}});
+   await tx.auditLog.create({data:{actor_user_id:actor.id,action:'PASSWORD_CHANGED',entity_type:'users',entity_id:actor.id,details:{password_changed:true}}});
+   return {};
+  });
+  if('error' in result)throw result.error;
+ }
  private validate(input:{name:unknown;role:unknown;active?:unknown;employee_code?:unknown;password?:unknown},creating:boolean) {
   if(typeof input.name!=='string'||!input.name.trim()||input.name.trim().length>80||typeof input.role!=='string'||!Object.hasOwn(roleLabels,input.role)) throw new AuthError(400,'氏名とロールを確認してください');
   if(!creating&&typeof input.active!=='boolean') throw new AuthError(400,'有効状態を選択してください');

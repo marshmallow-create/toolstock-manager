@@ -8,6 +8,7 @@ const targets = {
   orders: { entry: 'tests/order-list.test.ts', args: ['--test'] },
   'orders-http': { entry: 'tests/order-list-http.test.ts', args: ['--test'] },
   'cleanup-migration': { entry: 'tests/cleanup-migration.test.ts', args: ['--test'] },
+  'current-cleanup-migration': { entry: 'tests/current-cleanup-migration.test.ts', args: ['--test'] },
   'tool-import': { entry: 'tests/tool-import.test.ts', args: ['--test'] },
   'tool-workbook': { entry: 'tests/tool-workbook.test.ts', args: ['--test'] },
   'tool-import-http': { entry: 'tests/tool-import-http.test.ts', args: ['--test'] },

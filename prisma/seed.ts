@@ -10,10 +10,10 @@ try {
     for (const location_code of ['A-01','A-02','B-01']) await tx.location.upsert({ where: { location_code }, update: {}, create: { location_code,name: `架空棚 ${location_code}` } });
     const actor = await tx.user.findUniqueOrThrow({ where: { employee_code:'ADMIN001' } });
     const shelf = await tx.location.findUniqueOrThrow({ where: { location_code:'A-01' } });
-    const definitions = [['T001','超硬ドリルφ10','DRILL','本'],['T002','超硬エンドミルφ16','END_MILL','本'],['T003','旋削チップCNMG120408','INSERT','個'],['T004','スパイラルタップM8','TAP','本']];
-    for (const [tool_code,name,category,unit] of definitions) {
-      const tool = await tx.tool.upsert({ where:{tool_code},update:{},create:{tool_code,name,category,unit,shelf_code:'A-01',unit_price:'1250.00'} });
-      await tx.inventoryPolicy.upsert({ where:{tool_id:tool.id},update:{},create:{tool_id:tool.id,safety_stock:5,reorder_point:15,target_stock:30} });
+    const definitions = [['T001','超硬ドリルφ10','DRILL'],['T002','超硬エンドミルφ16','END_MILL'],['T003','旋削チップCNMG120408','INSERT'],['T004','スパイラルタップM8','TAP']];
+    for (const [tool_code,name,category] of definitions) {
+      const tool = await tx.tool.upsert({ where:{tool_code},update:{},create:{tool_code,name,category,shelf_code:'A-01',unit_price:'1250.00'} });
+      await tx.inventoryPolicy.upsert({ where:{tool_id:tool.id},update:{},create:{tool_id:tool.id,reorder_point:15} });
       const existing = await tx.stockBalance.findUnique({where:{tool_id_location_id:{tool_id:tool.id,location_id:shelf.id}}});
       if (!existing) {
         await tx.stockBalance.create({data:{tool_id:tool.id,location_id:shelf.id,on_hand:20,reserved:0}});

@@ -24,6 +24,7 @@ test('発注リストは認証が必要でメニューは入出庫履歴の直�
  assert.equal((await request('/orders')).status,307);assert.equal((await request('/api/orders')).status,401);
  for(const role of ['WORKER','ADMIN']){
   const html=await (await request('/dashboard',role)).text();assert.ok(html.indexOf('href="/history"')<html.indexOf('href="/orders"'));assert.ok(html.indexOf('href="/orders"')<html.indexOf('href="/tools/new"'));
+  assert.doesNotMatch(html,/要確認/);
   assert.equal((await request('/api/orders',role)).status,200);
   const page=await (await request('/orders',role)).text();assert.ok(page.includes('マイページへ戻る'));assert.ok(page.includes('発注リストに該当する工具はありません。'));
  }
@@ -36,11 +37,19 @@ test('出庫後の厳密な境界判定と最新出庫の操作者、全ユー�
  assert.equal((await issue(1,'WORKER',key)).status,200);
  const result=await (await request('/api/orders','ADMIN')).json();assert.equal(result.total,1);assert.equal(result.items[0].quantity,7);assert.equal(result.items[0].actor.employee_code,'WORKER');assert.equal(result.items[0].created_at,source.created_at);
  for(const role of ['WORKER','ADMIN']){
+  const dashboard=await (await request('/dashboard',role)).text();
+  const menuButton=dashboard.match(/<button\b[^>]*aria-expanded="false"[^>]*>([\s\S]*?)<\/button>/)?.[1];assert.ok(menuButton);assert.match(menuButton,/要確認.*1件/s);
+  const orderLink=dashboard.match(/<a\b[^>]*href="\/orders"[^>]*>([\s\S]*?)<\/a>/)?.[1];assert.ok(orderLink);assert.match(orderLink,/要確認.*1件/s);
   const api=await request('/api/orders',role);assert.match(api.headers.get('cache-control')??'',/no-store/);const data=await api.json();
   assert.equal(data.items.length,1);assert.equal(data.items[0].tool.department,'17314');assert.equal(data.items[0].unit_price,'1350.50');
   const html=await (await request('/orders',role)).text();
-  assert.deepEqual([...html.matchAll(/<th\b[^>]*>(.*?)<\/th>/gs)].map(m=>m[1]),['日時','品目コード','品目名','カテゴリー','発注数','操作者','単価','部門','発注']);
-  const cells=[...html.matchAll(/<td\b[^>]*>(.*?)<\/td>/gs)].map(m=>m[1]);assert.equal(cells.length,9);if(role==='ADMIN')assert.match(cells[8],/発注済みに登録/);else assert.equal(cells[8],'');assert.equal(cells[6],'¥1,351');assert.ok(!html.includes('1350.50'));
+  assert.deepEqual([...html.matchAll(/<th\b[^>]*>(.*?)<\/th>/gs)].map(m=>m[1]),['日時','品目コード','品目名','カテゴリー','発注数','操作者','発注単価','部門','発注の確認']);
+  const cells=[...html.matchAll(/<td\b[^>]*>(.*?)<\/td>/gs)].map(m=>m[1]);assert.equal(cells.length,9);
+  {
+   assert.deepEqual([...cells[8].matchAll(/<button\b[^>]*>(.*?)<\/button>/gs)].map(m=>m[1]),['発注済みへ登録','取消']);
+   assert.doesNotMatch(cells[8],/type="number"/);assert.match(cells[8],/name="quantity"[^>]*value="7"/);
+   assert.match(cells[8],/formAction="\/api\/orders\/cancel"/);
+  }assert.equal(cells[6],'¥1,351');assert.ok(!html.includes('1350.50'));
  }
  assert.equal((await issue(1,'ADMIN')).status,200);const latest=await (await request('/api/orders','ADMIN')).json();assert.equal(latest.total,1);assert.equal(latest.items[0].actor.employee_code,'ADMIN');
 });
@@ -52,17 +61,57 @@ test('発注APIは認証・権限・Originを確認し箱発注から入出庫�
  const entries=await (await request('/api/orders','ADMIN')).json();
  const payload={tool_id:toolId,entry_id:entries.items[0].id,quantity:2,expected_units_per_order:10,request_key:randomUUID()};
  assert.equal((await post('/api/orders',undefined,payload)).status,401);
- assert.equal((await post('/api/orders','WORKER',payload)).status,403);
  assert.equal((await post('/api/orders','ADMIN',payload,'https://evil.invalid')).status,403);
- const created=await post('/api/orders','ADMIN',payload);assert.equal(created.status,200);const order=(await created.json()).order;
- assert.equal(order.stock_quantity,20);assert.equal((await post('/api/orders','ADMIN',payload)).status,200);
- const page=await (await request('/tools/'+toolId,'WORKER')).text();assert.match(page,/発注済み・未入庫/);assert.match(page,/name="tool_order_id"/);
+ const created=await post('/api/orders','WORKER',payload);assert.equal(created.status,200);const order=(await created.json()).order;
+ assert.equal((await fixture.db.toolOrder.findUniqueOrThrow({where:{id:order.id}})).created_by,fixture.users.WORKER);
+ for(const role of ['WORKER','ADMIN'])assert.doesNotMatch(await (await request('/dashboard',role)).text(),/要確認/);
+ assert.equal(order.stock_quantity,20);assert.equal((await post('/api/orders','WORKER',payload)).status,200);
+ const page=await (await request('/tools/'+toolId,'WORKER')).text();assert.doesNotMatch(page,/発注済み・未入庫|未入庫分を発注取消|name="tool_order_id"/);
+ const main=page.slice(page.indexOf('<main'),page.indexOf('</main>'));
+ assert.doesNotMatch(main, /在庫単位|発注単位|入数|箱|個|name="quantity_unit"/);
  const receipt=await post('/api/inventory/receive','WORKER',{tool_id:toolId,location_id:locationId,quantity:1,quantity_unit:'order',tool_order_id:order.id,request_key:randomUUID()});
  assert.equal(receipt.status,200);assert.equal((await receipt.json()).transaction.quantity,10);
  const out=await issue(3);assert.equal(out.status,200);const id=(await out.json()).transaction.id;
  const history=(await (await request('/api/history/'+id,'WORKER')).json()).transaction;assert.equal(history.unit_price,'500.00');assert.equal(history.amount,'-1500.00');
  assert.equal((await service.toolDetail(fixture.tokens.ADMIN,toolId)).on_order,10);
+ assert.equal((await (await request('/api/orders','ADMIN')).json()).total,0);
  assert.equal((await post('/api/orders/'+order.id+'/cancel','WORKER',{request_key:randomUUID()})).status,403);
  const cancelled=await post('/api/orders/'+order.id+'/cancel','ADMIN',{request_key:randomUUID()});assert.equal(cancelled.status,200);
  assert.equal((await service.toolDetail(fixture.tokens.ADMIN,toolId)).on_order,0);
+});
+
+test('一覧の取消ボタンは権限とOriginを確認して発注せず一覧へ戻る',async()=>{
+ const service=new MastersService(fixture.db);
+ const tool=await service.createTool(fixture.tokens.ADMIN,{tool_code:'CANCEL-HTTP',name:'取消対象',category:'DRILL',on_hand:2,reorder_point:5,order_quantity:3});
+ const balance=await fixture.db.stockBalance.findFirstOrThrow({where:{tool_id:tool.id}});
+ await request('/api/inventory/issue','ADMIN',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({tool_id:tool.id,location_id:balance.location_id,quantity:1,request_key:randomUUID()})});
+ const entry=await fixture.db.orderListEntry.findUniqueOrThrow({where:{tool_id:tool.id}});
+ const body=new URLSearchParams({tool_id:tool.id,entry_id:entry.id,request_key:randomUUID()}).toString();
+ const cancel=(role?:string,from=origin)=>request('/api/orders/cancel',role,{method:'POST',headers:{Origin:from,'Content-Type':'application/x-www-form-urlencoded'},body});
+ assert.equal((await cancel('WORKER','https://evil.invalid')).status,403);
+ assert.equal((await cancel('ADMIN','https://evil.invalid')).status,403);
+ assert.equal((await cancel()).headers.get('location'),origin+'/login?error='+encodeURIComponent('ログインしてください'));
+ const response=await cancel('WORKER');assert.equal(response.status,303);assert.equal(response.headers.get('location'),origin+'/orders?saved=1');
+ assert.equal(await fixture.db.orderListEntry.findUnique({where:{id:entry.id}}),null);
+ assert.equal(await fixture.db.toolOrder.count({where:{tool_id:tool.id}}),0);
+ assert.equal((await cancel('WORKER')).status,303);
+});
+
+test('通常の入庫フォーム送信で発注済み数量が減り、入庫取消で戻る',async()=>{
+ const service=new MastersService(fixture.db);
+ const tool=await service.createTool(fixture.tokens.ADMIN,{tool_code:'AUTO-RECEIPT',name:'自動入庫対象',category:'DRILL',on_hand:2,reorder_point:5,order_quantity:7});
+ const stock=await fixture.db.stockBalance.findFirstOrThrow({where:{tool_id:tool.id}});
+ const post=(path:string,body:unknown)=>request(path,'ADMIN',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)});
+ await post('/api/inventory/issue',{tool_id:tool.id,location_id:stock.location_id,quantity:1,request_key:randomUUID()});
+ const entry=await fixture.db.orderListEntry.findUniqueOrThrow({where:{tool_id:tool.id}});
+ assert.equal((await post('/api/orders',{tool_id:tool.id,entry_id:entry.id,quantity:7,expected_units_per_order:1,request_key:randomUUID()})).status,200);
+ const key=randomUUID(),body=new URLSearchParams({tool_id:tool.id,location_id:stock.location_id,quantity:'3',expected_units_per_order:'1',request_key:key}).toString();
+ const receive=()=>request('/api/inventory/receive','WORKER',{method:'POST',headers:{Origin:origin,'Content-Type':'application/x-www-form-urlencoded'},body});
+ assert.equal((await receive()).status,303);
+ assert.equal((await service.toolDetail(fixture.tokens.ADMIN,tool.id)).on_order,4);
+ assert.equal((await receive()).status,303);
+ assert.equal((await service.toolDetail(fixture.tokens.ADMIN,tool.id)).on_order,4);
+ const receipt=await fixture.db.inventoryTransaction.findUniqueOrThrow({where:{idempotency_key:'phase4:'+key}});
+ assert.equal((await post('/api/inventory/reverse',{transaction_id:receipt.id,request_key:randomUUID()})).status,200);
+ assert.equal((await service.toolDetail(fixture.tokens.ADMIN,tool.id)).on_order,7);
 });

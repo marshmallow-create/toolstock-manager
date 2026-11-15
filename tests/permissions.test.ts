@@ -2,10 +2,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { can } from '../src/lib/auth/permissions';
 
-const operations = ['orders:manage', 'inventory:read', 'inventory:issue', 'history:own', 'history:all', 'prices:read', 'inventory:receive', 'inventory:reverse', 'tools:create', 'tools:import', 'tools:export', 'tools:update', 'masters:write', 'users:manage'];
+const operations = ['orders:manage', 'inventory:read', 'inventory:issue', 'history:own', 'history:all', 'prices:read', 'inventory:receive', 'inventory:reverse', 'tools:create', 'tools:import', 'tools:export', 'tools:update', 'masters:write', 'users:manage','password:change'];
+
+test('作業者と管理者は発注の確認を操作できる', () => {
+ for (const role of ['WORKER','ADMIN']) assert.equal(can(role,'orders:confirm'),true);
+ for (const role of ['UNKNOWN','PURCHASER','']) assert.equal(can(role,'orders:confirm'),false);
+ assert.equal(can('WORKER','orders:manage'),false);
+});
 
 test('作業者も全員の入出庫履歴を参照できる', () => {
- for (const permission of operations) assert.equal(can('WORKER', permission), ['inventory:read', 'inventory:issue', 'inventory:receive', 'history:own', 'history:all', 'prices:read', 'tools:create'].includes(permission), permission);
+ for (const permission of operations) assert.equal(can('WORKER', permission), ['inventory:read', 'inventory:issue', 'inventory:receive', 'history:own', 'history:all', 'prices:read', 'tools:create','password:change'].includes(permission), permission);
 });
 
 test('管理者はすべての業務操作を実行できる', () => {

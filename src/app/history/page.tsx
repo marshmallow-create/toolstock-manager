@@ -29,7 +29,7 @@ export default async function History({ searchParams }: { searchParams: Promise<
     <label className="grid gap-1 text-sm">単価の下限（円）<input name="unit_price_min" type="number" min="0" max="999999999999.99" step="0.00000001" inputMode="decimal" defaultValue={queryText(search.unit_price_min)} className={inputClass} /></label>
     <label className="grid gap-1 text-sm">単価の上限（円）<input name="unit_price_max" type="number" min="0" max="999999999999.99" step="0.00000001" inputMode="decimal" defaultValue={queryText(search.unit_price_max)} className={inputClass} /></label>
    </>}
-   <div className="flex items-end gap-4"><button className="ui-button">検索する</button><Link href="/history" className="py-2 text-sm underline">条件をクリア</Link></div>
+   <div className="flex flex-wrap items-end gap-3"><button className="ui-button">検索する</button><Link href="/history" className="ui-secondary">条件をクリア</Link></div>
   </form>
   <p className="mb-2 text-right text-sm">{result.total}件 / {result.page}ページ（1ページ50件）</p><HistoryTable items={result.items} canReverse={can(actor.role, 'inventory:reverse')} returnTo={pageLink(result.page)} />
   <nav aria-label="履歴のページ切り替え" className="mt-3 flex gap-4 text-sm">{result.page > 1 && <Link href={pageLink(result.page - 1)} className="underline">前のページ</Link>}{result.page * result.pageSize < result.total && <Link href={pageLink(result.page + 1)} className="underline">次のページ</Link>}{result.page > 1 && !result.items.length && <Link href={pageLink(1)} className="underline">先頭ページへ</Link>}</nav>

@@ -26,11 +26,11 @@ const balance=(s:FixtureStock)=>f.db.stockBalance.findUniqueOrThrow({where:{tool
 
 test('入数で割った単価・金額を保存し価格変更後の取消でも元金額を戻す',async()=>{
  const s=await stock(20);
- await masters.updateTool(token(),s.tool.id,{name:s.tool.name,category:s.tool.category,unit:s.tool.unit,active:true,reorder_point:0,order_unit:'箱',units_per_order:10,unit_price:'5000'});
+ await masters.updateTool(token(),s.tool.id,{name:s.tool.name,category:s.tool.category,active:true,reorder_point:0,order_unit:'箱',units_per_order:10,unit_price:'5000'});
  const issued=await service.issue(token(),issueInput(s,3));
  const history=await service.historyDetail(token(),issued.id);
  assert.equal(history.unit_price,'500.00');assert.equal(history.amount,'-1500.00');
- await masters.updateTool(token(),s.tool.id,{name:s.tool.name,category:s.tool.category,unit:s.tool.unit,active:true,reorder_point:0,units_per_order:3,unit_price:'1000'});
+ await masters.updateTool(token(),s.tool.id,{name:s.tool.name,category:s.tool.category,active:true,reorder_point:0,units_per_order:3,unit_price:'1000'});
  const reversed=await service.reverse(token(),{transaction_id:issued.id,request_key:randomUUID()});
  assert.equal((await service.historyDetail(token(),reversed.id)).amount,'1500.00');
  const third=await service.issue(token(),issueInput(s,3));
@@ -315,7 +315,7 @@ test('snapshot prices include zero and maximum precision and old replay retains 
 });
 
 test('割り切れない在庫単価を8桁で検索でき最大金額も表示で丸め落とさない',async()=>{
- const s=await stock(10);await masters.updateTool(token(),s.tool.id,{name:s.tool.name,category:s.tool.category,unit:s.tool.unit,active:true,reorder_point:0,units_per_order:3,unit_price:'1000'});
+ const s=await stock(10);await masters.updateTool(token(),s.tool.id,{name:s.tool.name,category:s.tool.category,active:true,reorder_point:0,units_per_order:3,unit_price:'1000'});
  const issued=await service.issue(token(),issueInput(s));
  const list=await service.listHistory(token(),{tool_id:s.tool.id,unit_price_min:'333.33333333',unit_price_max:'333.33333333'});
  assert.ok(list.items.some(item=>item.id===issued.id));

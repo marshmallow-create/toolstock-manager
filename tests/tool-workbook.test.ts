@@ -7,12 +7,35 @@ import * as workbookApi from '../src/lib/masters/tool-workbook';
 
 const exportTool = (index=0) => ({ tool_code: '000'+index, name: '=工具', category: 'DRILL', on_hand: 7, reorder_point: 3, order_quantity: 2, unit_price: '125.55', department: '17314', shelf_code: '001' });
 
+test('発注単価の見出しで出力し、旧単価の9・10・12列Excelも取り込める',async()=>{
+ const book=new ExcelJS.Workbook();await book.xlsx.load(await createToolTemplate('common') as never);
+ assert.equal(book.getWorksheet('工具登録・変更')!.getCell('G1').value,'発注単価');
+ for(const count of [9,10,12]){
+  const legacy=new ExcelJS.Workbook(),sheet=legacy.addWorksheet('工具登録');
+  const headers=['品目コード','品目名','カテゴリー','在庫','発注ライン','発注数','単価','部門','棚番'];
+  sheet.addRow([...headers,...(count===10?['入数']:count===12?['在庫単位','発注単位','入数']:[])]);
+  sheet.addRow(['OLD-'+count,'旧工具','ドリル',1,2,3,125.55,'17314','A-01',...(count===10?[10]:count===12?['個','箱',10]:[])]);
+  const rows=await parseToolWorkbook(Buffer.from(await legacy.xlsx.writeBuffer()));
+  assert.equal(rows[0].values.unit_price,'125.55');
+ }
+});
+
+test('共通テンプレートは登録・変更の両モードで同じ入力行を読み込める',async()=>{
+ const book=new ExcelJS.Workbook();await book.xlsx.load(await createToolTemplate('common') as never);
+ const sheet=book.getWorksheet('工具登録・変更');assert.ok(sheet);
+ assert.equal(sheet.getCell('C2').dataValidation.allowBlank,true);
+ sheet.getRow(2).values=['COMMON','共通工具','ドリル',5,2,3,100,'17314','A-01',10];
+ const buffer=Buffer.from(await book.xlsx.writeBuffer());
+ const created=await parseToolWorkbook(buffer,'create'),updated=await parseToolWorkbook(buffer,'update');
+ assert.deepEqual(created,updated);assert.equal(created[0].values.units_per_order,'10');
+});
+
 test('一覧Excelは変更形式で先頭0・小数単価・文字列を保持して読み戻せる',async()=>{
  assert.equal(typeof workbookApi.createToolExport,'function','Excel出力が提供される');
  const file=await workbookApi.createToolExport([exportTool()]);
  assert.match(file.filename,/\.xlsx$/);assert.match(file.contentType,/spreadsheetml/);
  const rows=await parseToolWorkbook(file.buffer,'update');
- assert.deepEqual(rows[0].values,{tool_code:'0000',name:'=工具',category:'ドリル',on_hand:'7',reorder_point:'3',order_quantity:'2',unit_price:'125.55',department:'17314',shelf_code:'001',unit:'',order_unit:'',units_per_order:''});
+ assert.deepEqual(rows[0].values,{tool_code:'0000',name:'=工具',category:'ドリル',on_hand:'7',reorder_point:'3',order_quantity:'2',unit_price:'125.55',department:'17314',shelf_code:'001',units_per_order:''});
  const book=new ExcelJS.Workbook();await book.xlsx.load(file.buffer as never);
  assert.equal(book.getWorksheet('工具変更')!.getCell('G2').numFmt,'0');
 });
@@ -57,7 +80,7 @@ test('登録と変更の単価は小数を表示せず入力した小数値を�
  }
 });
 
-test('変更テンプレートは12列でカテゴリーの空欄と変更手順を案内する',async()=>{
+test('変更テンプレートは10列でカテゴリーの空欄と変更手順を案内する',async()=>{
  const book=new ExcelJS.Workbook();await book.xlsx.load(await createToolTemplate('update') as never);
  const sheet=book.getWorksheet('工具変更')!;
  assert.ok(sheet);assert.deepEqual((sheet.getRow(1).values as unknown[]).slice(1),IMPORT_HEADERS);
@@ -71,7 +94,7 @@ test('変更テンプレートは12列でカテゴリーの空欄と変更手順
 test('変更の解析は部分入力の空欄と数量0を区別して実際の行番号を保持する',async()=>{
  const rows=await parseToolWorkbook(await workbook([['A1','','',0,'',0,'0.25','',''],[],['A2','新しい名前']],'update'),'update');
  assert.equal(rows.length,2);assert.equal(rows[1].rowNumber,4);
- assert.deepEqual(rows[0].values,{tool_code:'A1',name:'',category:'',on_hand:'0',reorder_point:'',order_quantity:'0',unit_price:'0.25',department:'',shelf_code:'',unit:'',order_unit:'',units_per_order:''});
+ assert.deepEqual(rows[0].values,{tool_code:'A1',name:'',category:'',on_hand:'0',reorder_point:'',order_quantity:'0',unit_price:'0.25',department:'',shelf_code:'',units_per_order:''});
  assert.equal(rows[1].values.name,'新しい名前');assert.equal(rows[1].values.unit_price,'');
 });
 
@@ -128,12 +151,17 @@ test('巨大な行・列・名前付き範囲でパーサーを膨張させな�
  await assert.rejects(parseToolWorkbook(await nested.generateAsync({type:'nodebuffer'})),/200行/);
 });
 
-test('単位・入数をExcelで往復し旧9列のファイルも読み込める',async()=>{
- const result=await workbookApi.createToolExport([{...exportTool(),unit:'個',order_unit:'箱',units_per_order:10}]);
+test('単位名を出力せず入数をExcelで往復し旧9列・12列も読み込める',async()=>{
+ const result=await workbookApi.createToolExport([{...exportTool(),units_per_order:10}]);
  const row=(await parseToolWorkbook(result.buffer,'update'))[0];
- assert.equal(row.values.unit,'個');assert.equal(row.values.order_unit,'箱');assert.equal(row.values.units_per_order,'10');
+ assert.ok(!('unit' in row.values));assert.ok(!('order_unit' in row.values));assert.equal(row.values.units_per_order,'10');
  const book=new ExcelJS.Workbook(),sheet=book.addWorksheet('工具変更');
  sheet.addRow(IMPORT_HEADERS.slice(0,9));sheet.addRow(['0000','','','','','','6000']);
  const legacy=(await parseToolWorkbook(Buffer.from(await book.xlsx.writeBuffer()),'update'))[0];
  assert.equal(legacy.values.unit_price,'6000');assert.equal(legacy.values.units_per_order,undefined);
+ const oldBook=new ExcelJS.Workbook(),oldSheet=oldBook.addWorksheet('工具変更');
+ oldSheet.addRow([...IMPORT_HEADERS.slice(0,9),'在庫単位','発注単位','入数']);
+ oldSheet.addRow(['0000','','','','','','6000','','','個','箱',10]);
+ const old=(await parseToolWorkbook(Buffer.from(await oldBook.xlsx.writeBuffer()),'update'))[0];
+ assert.equal(old.values.units_per_order,'10');assert.ok(!('unit' in old.values));assert.ok(!('order_unit' in old.values));
 });

@@ -76,12 +76,30 @@ test('8文字でユーザーを登録・ログイン・変更でき、不正な�
 
 test('2ロールの全操作が仕様の権限表と一致する',()=>{
   const expected = [
-    ['inventory:read','inventory:issue','inventory:receive','history:own','history:all','prices:read','tools:create'],
+    ['orders:confirm','inventory:read','inventory:issue','inventory:receive','history:own','history:all','prices:read','tools:create','password:change'],
     Object.keys(permissions),
   ];
   for(let i=0;i<roles.length;i++) for(const permission of Object.keys(permissions))
     assert.equal(can(roles[i],permission),expected[i].includes(permission),roles[i]+':'+permission);
   assert.equal(can('UNKNOWN','inventory:read'),false);
+});
+
+test('両ロールが自分のパスワードを変更し全セッションを失効する',async()=>{
+ for(const role of roles){
+  const user=await db.user.create({data:{employee_code:'SELF-'+role,name:'本人変更',role,password_hash:await hashPassword(password)}});
+  const first=await service.login(user.employee_code,password),other=await service.login(user.employee_code,password);
+  await assert.rejects(service.changePassword(undefined,{current_password:password,password:'New-pass-123',password_confirmation:'New-pass-123'}),status(401));
+  await assert.rejects(service.changePassword(first.token,{current_password:'wrong',password:'New-pass-123',password_confirmation:'New-pass-123'}),status(400));
+  await assert.rejects(service.changePassword(first.token,{current_password:password,password:'New-pass-123',password_confirmation:'different'}),status(400));
+  for(const value of ['short','x'.repeat(129)])await assert.rejects(service.changePassword(first.token,{current_password:password,password:value,password_confirmation:value}),status(400));
+  await service.changePassword(first.token,{current_password:password,password:'New-pass-123',password_confirmation:'New-pass-123'});
+  await assert.rejects(service.authenticate(first.token),status(401));await assert.rejects(service.authenticate(other.token),status(401));
+  await assert.rejects(service.login(user.employee_code,password),status(401));
+  assert.equal((await service.login(user.employee_code,'New-pass-123')).user.role,role);
+  const audit=await db.auditLog.findFirstOrThrow({where:{action:'PASSWORD_CHANGED',entity_id:user.id}});
+  assert.equal(audit.actor_user_id,user.id);assert.doesNotMatch(JSON.stringify(audit.details),/New-pass-123|Fictional|scrypt/);
+  await db.user.update({where:{id:user.id},data:{active:false}});
+ }
 });
 test('社員IDログイン、トークンハッシュ保存、ログアウトと偽造トークン拒否',async()=>{
   const login=await service.login(codes[0],password);
@@ -91,6 +109,17 @@ test('社員IDログイン、トークンハッシュ保存、ログアウトと
   await assert.rejects(service.authenticate('forged'),status(401));
   await service.logout(login.token);
   await assert.rejects(service.authenticate(login.token),status(401));
+});
+
+test('本人パスワード変更の誤入力をアカウントごとに15分5回までに制限する',async()=>{
+ const user=await db.user.create({data:{employee_code:'CHANGE-LIMIT',name:'変更制限',role:'WORKER',password_hash:await hashPassword(password)}});
+ const first=await service.login(user.employee_code,password),other=await service.login(user.employee_code,password);
+ const body={current_password:'wrong',password:'New-pass-123',password_confirmation:'New-pass-123'};
+ for(let i=0;i<5;i++)await assert.rejects(service.changePassword(i%2?other.token:first.token,body),status(400));
+ await assert.rejects(service.changePassword(first.token,{...body,current_password:password}),status(429));
+ now=new Date(now.getTime()+15*60_000);
+ await service.changePassword(other.token,{...body,current_password:password});
+ assert.equal((await service.login(user.employee_code,'New-pass-123')).user.id,user.id);
 });
 test('無操作30分・最長8時間のセッション失効',async()=>{
   const login=await service.login(codes[0],password);

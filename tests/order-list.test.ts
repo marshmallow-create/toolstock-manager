@@ -6,7 +6,6 @@ import { MastersService } from '../src/lib/masters/service';
 import { InventoryService } from '../src/lib/inventory/service';
 import { AuthError } from '../src/lib/auth/service';
 import { listOrders } from '../src/lib/orders/list';
-import type { OrderStatus } from '../src/generated/prisma/client';
 
 let f: Awaited<ReturnType<typeof databaseFixture>>, masters: MastersService, inventory: InventoryService, seq = 0;
 before(async () => { f = await databaseFixture('order_list_test'); masters = new MastersService(f.db); inventory = new InventoryService(f.db); });
@@ -18,16 +17,28 @@ async function stock(quantity = 10, reorder_point = 10) {
  return { tool, location_id: balance.location_id };
 }
 type Stock = Awaited<ReturnType<typeof stock>>;
+test('作業者も発注リストを取り消せて、発注せず一覧から除外し再送しても新しい行を消さない',async()=>{
+ const {cancelOrderListEntry}=await import('../src/lib/orders/write');
+ const s=await stock(10,20);await inventory.issue(token(),input(s));
+ const queued=await entry(s);assert.ok(queued);
+ const req={tool_id:s.tool.id,entry_id:queued.id,request_key:randomUUID()};
+ await assert.rejects(cancelOrderListEntry(f.db,f.auth,undefined,req),(e:unknown)=>e instanceof AuthError&&e.status===401);
+ await cancelOrderListEntry(f.db,f.auth,token('WORKER'),req);
+ assert.equal(await entry(s),null);
+ assert.equal(await f.db.toolOrder.count({where:{tool_id:s.tool.id}}),0);
+ assert.equal((await masters.toolDetail(token(),s.tool.id)).order_quantity,7);
+ await inventory.issue(token(),input(s));const next=await entry(s);assert.ok(next);
+ await cancelOrderListEntry(f.db,f.auth,token('WORKER'),req);
+ assert.deepEqual(await entry(s),next);
+ assert.equal(await f.db.auditLog.count({where:{action:'ORDER_LIST_CANCELLED',entity_id:'order-list-cancel:'+req.request_key}}),1);
+});
 const input = (s: Stock, quantity = 1) => ({ tool_id: s.tool.id, location_id: s.location_id, quantity, request_key: randomUUID() });
 const entry = (s: Stock) => f.db.orderListEntry.findUnique({ where: { tool_id: s.tool.id } });
-async function order(s: Stock, status: OrderStatus, ordered_quantity: number, received_quantity = 0) {
- const supplier = await f.db.supplier.create({ data: { supplier_code: 'Q-' + randomUUID(), name: '架空仕入先' } });
- const purchase = await f.db.purchaseOrder.create({ data: { order_no: randomUUID(), supplier_id: supplier.id, requested_by: f.users.ADMIN, status } });
- await f.db.purchaseOrderItem.create({ data: { order_id: purchase.id, tool_id: s.tool.id, ordered_quantity, received_quantity, unit_price: '1', supplier_model: 'test', order_multiple: 1, lead_time_days: 1 } });
- return purchase;
+async function order(s: Stock, quantity: number, received_quantity = 0, cancelled_quantity = 0) {
+ return f.db.toolOrder.create({ data: {tool_id:s.tool.id,created_by:f.users.ADMIN,request_key:randomUUID(),order_quantity:quantity,units_per_order:1,stock_quantity:quantity,received_quantity,cancelled_quantity,purchase_unit_price:'1'} });
 }
 
-test('出庫後の全棚合計が発注点＋発注残を厳密に下回る場合だけ登録する', async () => {
+test('出庫後の全棚合計と発注残の合計が発注ラインを厳密に下回る場合だけ登録する', async () => {
  const s = await stock(6, 8);
  const other = await f.db.location.create({ data: { location_code: randomUUID(), name: '別棚' } });
  await f.db.stockBalance.create({ data: { tool_id: s.tool.id, location_id: other.id, on_hand: 3 } });
@@ -41,16 +52,29 @@ test('出庫後の全棚合計が発注点＋発注残を厳密に下回る場�
  assert.equal(await entry(absent), null);
 });
 
-test('発注残はORDERED/PARTIALLY_RECEIVEDの未受領数を明細ごとにゼロ下限で合計する', async () => {
- const s = await stock(12, 2);
- await order(s, 'ORDERED', 5, 1); // 4 remaining.
- await order(s, 'PARTIALLY_RECEIVED', 8, 3); // 5 remaining; threshold = 11.
- await order(s, 'ORDERED', 8, 8); // Fully received items add zero.
- for (const status of ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'EXPORTED', 'RECEIVED', 'REJECTED', 'CANCELLED'] as const) await order(s, status, 100);
+test('発注残は各発注の未入庫数を合計し、入庫済み・取消済みを除く', async () => {
+ const s = await stock(4, 12);
+ await order(s, 5, 1); // 4 remaining.
+ await order(s, 8, 3); // 5 remaining; total on order = 9.
+ await order(s, 8, 8); // Fully received items add zero.
+ await order(s, 100, 0, 100); // Fully cancelled items add zero.
  await inventory.issue(token('WORKER'), input(s));
- assert.equal(await entry(s), null); // 11 == 11.
+ assert.equal(await entry(s), null); // Stock 3 + on order 9 == reorder point 12.
  const issued = await inventory.issue(token('WORKER'), input(s));
  assert.equal((await entry(s))?.trigger_transaction_id, issued.id);
+});
+
+test('発注済みの未入庫数を在庫に加算し入庫後も合計が発注ライン未満の出庫だけを掲載する',async()=>{
+ const {registerOrder}=await import('../src/lib/orders/write');
+ const s=await stock(10,10);
+ await masters.updateTool(token(),s.tool.id,{name:s.tool.name,category:s.tool.category,active:true,reorder_point:10,units_per_order:5});
+ await inventory.issue(token(),input(s));const queued=await entry(s);assert.ok(queued);
+ await registerOrder(f.db,f.auth,token(),{tool_id:s.tool.id,entry_id:queued.id,quantity:2,expected_units_per_order:5,request_key:randomUUID()});
+ await inventory.issue(token(),input(s,5));assert.equal(await entry(s),null); // 4 + 10 > 10.
+ await inventory.receive(token(),input(s,4));
+ await inventory.issue(token(),input(s,4));assert.equal(await entry(s),null); // 4 + 6 == 10.
+ const issued=await inventory.issue(token(),input(s)); // 3 + 6 < 10.
+ assert.equal((await entry(s))?.trigger_transaction_id,issued.id);
 });
 
 test('工具ごとに一行で最新の条件該当出庫だけを保持し再送で更新しない', async () => {
@@ -75,7 +99,7 @@ test('入庫・取消・手修正・失敗出庫は新規登録せず既存行�
  await inventory.receive(token('WORKER'), input(s));
  const nonqualifying = await inventory.issue(token('WORKER'), input(s));
  await inventory.reverse(token(), { transaction_id: nonqualifying.id, request_key: randomUUID() });
- await masters.updateTool(token(), s.tool.id, { name: s.tool.name, category: s.tool.category, unit: s.tool.unit, active: true, on_hand: 1, expected_on_hand: 11, reorder_point: 20 });
+ await masters.updateTool(token(), s.tool.id, { name: s.tool.name, category: s.tool.category, active: true, on_hand: 1, expected_on_hand: 11, reorder_point: 20 });
  await assert.rejects(inventory.issue(token('WORKER'), input(s, 2)));
  assert.equal(await entry(s), null);
  const issued = await inventory.issue(token('WORKER'), input(s));
@@ -138,17 +162,17 @@ test('一覧は最新出庫日時・取引ID降順で50件ずつ返し巨大な�
 test('箱発注を在庫単位で集計し部分入庫・再送・取消を一体管理する',async()=>{
  const {registerOrder,cancelOrder}=await import('../src/lib/orders/write');
  const s=await stock(20,30);
- await masters.updateTool(token(),s.tool.id,{name:s.tool.name,category:s.tool.category,unit:s.tool.unit,active:true,reorder_point:30,order_unit:'箱',units_per_order:10,unit_price:'5000'});
+ await masters.updateTool(token(),s.tool.id,{name:s.tool.name,category:s.tool.category,active:true,reorder_point:30,order_unit:'箱',units_per_order:10,unit_price:'5000'});
  await inventory.issue(token(),input(s));
  const queued=await entry(s);assert.ok(queued);
  const req={tool_id:s.tool.id,entry_id:queued.id,quantity:2,expected_units_per_order:10,request_key:randomUUID()};
- await assert.rejects(registerOrder(f.db,f.auth,token('WORKER'),req),(e:unknown)=>e instanceof AuthError&&e.status===403);
- const placed=await registerOrder(f.db,f.auth,token(),req);
+ const placed=await registerOrder(f.db,f.auth,token('WORKER'),req);
+ assert.equal((await f.db.toolOrder.findUniqueOrThrow({where:{id:placed.id}})).created_by,f.users.WORKER);
  assert.equal(placed.stock_quantity,20);assert.equal(await entry(s),null);
  assert.equal((await masters.toolDetail(token(),s.tool.id)).on_order,20);
- assert.deepEqual(await registerOrder(f.db,f.auth,token(),req),placed);
- await assert.rejects(registerOrder(f.db,f.auth,token(),{...req,quantity:3}),(e:unknown)=>e instanceof AuthError&&e.status===409);
- await masters.updateTool(token(),s.tool.id,{name:s.tool.name,category:s.tool.category,unit:s.tool.unit,active:true,reorder_point:30,units_per_order:3,unit_price:'1000'});
+ assert.deepEqual(await registerOrder(f.db,f.auth,token('WORKER'),req),placed);
+ await assert.rejects(registerOrder(f.db,f.auth,token('WORKER'),{...req,quantity:3}),(e:unknown)=>e instanceof AuthError&&e.status===409);
+ await masters.updateTool(token(),s.tool.id,{name:s.tool.name,category:s.tool.category,active:true,reorder_point:30,units_per_order:3,unit_price:'1000'});
  const receiptReq={...input(s),quantity_unit:'order',tool_order_id:placed.id};
  const receipt=await inventory.receive(token('WORKER'),receiptReq);
  assert.equal(receipt.quantity,10);assert.equal((await masters.toolDetail(token(),s.tool.id)).on_order,10);
@@ -184,4 +208,26 @@ test('発注登録の工具ロック待ちは再試行可能な409を返す',asy
  const {registerOrder}=await import('../src/lib/orders/write');const s=await stock(5,30);await inventory.issue(token(),input(s));const queued=await entry(s);assert.ok(queued);
  await f.admin.query('BEGIN');await f.admin.query('SELECT id FROM tools WHERE id=$1 FOR UPDATE',[s.tool.id]);
  try{await assert.rejects(registerOrder(f.db,f.auth,token(),{tool_id:s.tool.id,entry_id:queued.id,quantity:1,expected_units_per_order:1,request_key:randomUUID()}),(e:unknown)=>e instanceof AuthError&&e.status===409);}finally{await f.admin.query('ROLLBACK');}
+});
+
+test('通常入庫は古い発注から未入庫数を減らし、分割・超過・再送・取消を整合させる',async()=>{
+ const {registerOrder}=await import('../src/lib/orders/write');
+ const s=await stock(20,30);
+ const placed=[];
+ for(const quantity of [5,7]){
+  await inventory.issue(token(),input(s));const queued=await entry(s);assert.ok(queued);
+  placed.push(await registerOrder(f.db,f.auth,token(),{tool_id:s.tool.id,entry_id:queued.id,quantity,expected_units_per_order:1,request_key:randomUUID()}));
+ }
+ const req=input(s,8),receipt=await inventory.receive(token('WORKER'),req);
+ assert.equal((await masters.toolDetail(token(),s.tool.id)).on_order,4);
+ assert.equal((await f.db.toolOrder.findUniqueOrThrow({where:{id:placed[0].id}})).received_quantity,5);
+ assert.equal((await f.db.toolOrder.findUniqueOrThrow({where:{id:placed[1].id}})).received_quantity,3);
+ assert.deepEqual(await inventory.receive(token('WORKER'),req),receipt);
+ assert.equal((await masters.toolDetail(token(),s.tool.id)).on_order,4);
+ const extra=await inventory.receive(token(),input(s,10));
+ assert.equal((await masters.toolDetail(token(),s.tool.id)).on_order,0);
+ await inventory.reverse(token(),{transaction_id:receipt.id,request_key:randomUUID()});
+ assert.equal((await masters.toolDetail(token(),s.tool.id)).on_order,8);
+ await inventory.reverse(token(),{transaction_id:extra.id,request_key:randomUUID()});
+ assert.equal((await masters.toolDetail(token(),s.tool.id)).on_order,12);
 });

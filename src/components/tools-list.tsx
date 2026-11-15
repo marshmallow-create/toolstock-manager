@@ -15,7 +15,7 @@ export async function ToolsList({ search, canExport = false }: { search: Search;
  const exportHref = '/api/tools/export' + (exportQuery.size ? '?' + exportQuery.toString() : '');
  return <>
   <Messages search={search} />{error && <p role="alert" className="mb-4 text-red-800">{error}</p>}
-  <form method="get" action="/dashboard" className="ui-panel mb-3 grid gap-3 rounded-xl bg-white p-3 shadow-sm sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+  <form method="get" action="/dashboard" className="ui-panel mb-3 grid grid-cols-2 gap-3 rounded-xl bg-white p-3 shadow-sm [&_label]:min-w-0 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
    <label className="grid gap-1 text-sm">品目コード<input name="tool_code" maxLength={100} defaultValue={queryText(search.tool_code)} className={searchInputClass} /></label>
    <label className="grid gap-1 text-sm">品目名<input name="name" maxLength={100} defaultValue={queryText(search.name)} className={searchInputClass} /></label>
    <CategoryField value={queryText(search.category)} />

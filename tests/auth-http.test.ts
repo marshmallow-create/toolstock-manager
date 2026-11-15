@@ -47,7 +47,7 @@ async function login(code:string,candidatePassword=password){
 const post=(path:string,cookie:string,body:unknown,from?:string)=>request(path,{method:'POST',headers:{'Content-Type':'application/json',Origin:from??origin,Cookie:cookie},body:JSON.stringify(body)});
 test('匿名ユーザーの保護画面はログインへ誘導しAPIは401',async()=>{
  assert.equal((await request('/login')).status,200);
- for(const path of ['/dashboard','/admin/users']){
+ for(const path of ['/dashboard','/admin/users','/account/password']){
   const r=await request(path);assert.equal(r.status,307);assert.ok(r.headers.get('location')?.includes('/login'));
  }
  for(const path of ['/api/auth/session','/api/admin/users','/api/health/db']) assert.equal((await request(path)).status,401,path);
@@ -170,4 +170,28 @@ test('HTMLフォームのログイン・登録・更新・ログアウトが303�
  assert.equal((await db.user.findUniqueOrThrow({where:{id:user.id}})).active,false);
  const list=await request('/admin/users',{headers:{Cookie:cookie}});assert.equal(list.status,200);assert.match(await list.text(),/FORM-USER/);
  const logout=await form('/api/auth/logout',{},cookie);assert.equal(logout.status,303);assert.match(logout.headers.get('set-cookie')??'',/Max-Age=0/);
+});
+
+test('本人用パスワード変更は両ロールのメニューから利用でき、他人を変更せず再ログインする',async()=>{
+ assert.equal((await post('/api/auth/password','',{current_password:password,password:'New-pass-123',password_confirmation:'New-pass-123'})).status,401);
+ for(const role of ['WORKER','ADMIN'] as const){
+  const code='SELF-HTTP-'+role;
+  await db.user.create({data:{employee_code:code,name:'本人変更',role,password_hash:await hashPassword(password)}});
+  const cookie=await login(code),other=await login(code);
+  const target=await db.user.findUniqueOrThrow({where:{employee_code:'HTTP-ADMIN'}});
+  const dashboard=await (await request('/dashboard',{headers:{Cookie:cookie}})).text();assert.match(dashboard,/href="\/account\/password"/);
+  const page=await request('/account/password',{headers:{Cookie:cookie}});assert.equal(page.status,200);
+  const html=await page.text();for(const field of ['current_password','password','password_confirmation'])assert.match(html,new RegExp('name="'+field+'"'));
+  const payload={current_password:password,password:'New-pass-123',password_confirmation:'New-pass-123',user_id:target.id};
+  assert.equal((await post('/api/auth/password',cookie,payload,'https://evil.invalid')).status,403);
+  assert.equal((await post('/api/auth/password',cookie,{...payload,current_password:'wrong'})).status,400);
+  assert.equal((await post('/api/auth/password',cookie,{...payload,password_confirmation:'mismatch'})).status,400);
+  const response=await request('/api/auth/password',{method:'POST',headers:{Cookie:cookie,Origin:origin,'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(payload)});
+  assert.equal(response.status,303);assert.equal(response.headers.get('location'),origin+'/login?password_changed=1');assert.match(response.headers.get('set-cookie')??'',/Max-Age=0/);
+  for(const session of [cookie,other])assert.equal((await request('/api/auth/session',{headers:{Cookie:session}})).status,401);
+  assert.equal((await db.user.findUniqueOrThrow({where:{id:target.id}})).password_hash,target.password_hash);
+  const old=await post('/api/auth/login','',{employee_code:code,password});assert.equal(old.status,401);
+  await login(code,'New-pass-123');
+  assert.match(await (await request('/login?password_changed=1')).text(),/パスワードを変更しました/);
+ }
 });

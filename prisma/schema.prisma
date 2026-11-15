@@ -16,17 +16,6 @@ enum TransactionType {
  REVERSAL
  RETURN
 }
-enum OrderStatus {
- DRAFT
- PENDING_APPROVAL
- APPROVED
- EXPORTED
- ORDERED
- PARTIALLY_RECEIVED
- RECEIVED
- REJECTED
- CANCELLED
-}
 enum CandidateStatus {
  OPEN
  CONVERTED
@@ -45,8 +34,6 @@ model User {
  created_at DateTime @default(now()) @db.Timestamptz(3)
  updated_at DateTime @updatedAt @db.Timestamptz(3)
  inventory_transactions_actor_user_id_children InventoryTransaction[] @relation("inventory_transactions_actor_user_id")
- purchase_orders_requested_by_children PurchaseOrder[] @relation("purchase_orders_requested_by")
- purchase_orders_approved_by_children PurchaseOrder[] @relation("purchase_orders_approved_by")
  audit_logs_actor_user_id_children AuditLog[] @relation("audit_logs_actor_user_id")
  @@map("users")
 }
@@ -59,8 +46,6 @@ model Tool {
  shelf_code String @default("")
  unit_price Decimal? @db.Decimal(14, 2)
  category String
- unit String
- order_unit String @default("個")
  units_per_order Int @default(1)
  active Boolean @default(true)
  created_at DateTime @default(now()) @db.Timestamptz(3)
@@ -68,7 +53,6 @@ model Tool {
  stock_balances_tool_id_children StockBalance[] @relation("stock_balances_tool_id")
  inventory_transactions_tool_id_children InventoryTransaction[] @relation("inventory_transactions_tool_id")
  inventory_policies_tool_id_children InventoryPolicy? @relation("inventory_policies_tool_id")
- purchase_order_items_tool_id_children PurchaseOrderItem[] @relation("purchase_order_items_tool_id")
  reorder_candidates_tool_id_children ReorderCandidate[] @relation("reorder_candidates_tool_id")
  order_list_entry OrderListEntry? @relation("order_list_entries_tool_id")
  @@map("tools")
@@ -101,7 +85,6 @@ model InventoryTransaction {
  amount Decimal? @db.Decimal(24, 2)
  purchase_unit_price Decimal? @db.Decimal(14, 2)
  cost_units_per_order Int?
- stock_unit String?
  cost_basis String @default("LEGACY")
  tool_order_id String? @db.Uuid
  receipt_units_per_order Int?
@@ -132,58 +115,11 @@ model InventoryTransaction {
 model InventoryPolicy {
  id String @id @default(uuid()) @db.Uuid
  tool_id String @db.Uuid @unique
- safety_stock Int
  reorder_point Int
- target_stock Int
  created_at DateTime @default(now()) @db.Timestamptz(3)
  updated_at DateTime @updatedAt @db.Timestamptz(3)
  tool_id_record Tool @relation("inventory_policies_tool_id", fields: [tool_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
  @@map("inventory_policies")
-}
-model Supplier {
- id String @id @default(uuid()) @db.Uuid
- supplier_code String @unique
- name String
- email String?
- active Boolean @default(true)
- created_at DateTime @default(now()) @db.Timestamptz(3)
- updated_at DateTime @updatedAt @db.Timestamptz(3)
- purchase_orders_supplier_id_children PurchaseOrder[] @relation("purchase_orders_supplier_id")
- @@map("suppliers")
-}
-model PurchaseOrder {
- id String @id @default(uuid()) @db.Uuid
- order_no String @unique
- supplier_id String @db.Uuid
- status OrderStatus
- requested_by String @db.Uuid
- approved_by String? @db.Uuid
- ordered_at DateTime? @db.Timestamptz(3)
- created_at DateTime @default(now()) @db.Timestamptz(3)
- updated_at DateTime @updatedAt @db.Timestamptz(3)
- supplier_id_record Supplier @relation("purchase_orders_supplier_id", fields: [supplier_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
- requested_by_record User @relation("purchase_orders_requested_by", fields: [requested_by], references: [id], onDelete: Restrict, onUpdate: Cascade)
- approved_by_record User? @relation("purchase_orders_approved_by", fields: [approved_by], references: [id], onDelete: Restrict, onUpdate: Cascade)
- purchase_order_items_order_id_children PurchaseOrderItem[] @relation("purchase_order_items_order_id")
- @@index([status, created_at])
- @@map("purchase_orders")
-}
-model PurchaseOrderItem {
- id String @id @default(uuid()) @db.Uuid
- order_id String @db.Uuid
- tool_id String @db.Uuid
- ordered_quantity Int
- received_quantity Int @default(0)
- unit_price Decimal @db.Decimal(14, 2)
- supplier_model String
- order_multiple Int
- lead_time_days Int
- created_at DateTime @default(now()) @db.Timestamptz(3)
- updated_at DateTime @updatedAt @db.Timestamptz(3)
- order_id_record PurchaseOrder @relation("purchase_order_items_order_id", fields: [order_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
- tool_id_record Tool @relation("purchase_order_items_tool_id", fields: [tool_id], references: [id], onDelete: Restrict, onUpdate: Cascade)
- @@index([order_id])
- @@map("purchase_order_items")
 }
 model ReorderCandidate {
  id String @id @default(uuid()) @db.Uuid
@@ -244,7 +180,6 @@ model ToolOrder {
  created_by String @db.Uuid
  request_key String @unique
  order_quantity Int
- order_unit String
  units_per_order Int
  stock_quantity Int
  received_quantity Int @default(0)

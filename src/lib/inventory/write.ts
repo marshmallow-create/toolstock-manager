@@ -3,6 +3,7 @@ import type { PrismaClient, TransactionType } from '../../generated/prisma/clien
 import { AuthService, AuthError } from '../auth/service';
 import { audit } from '../masters/write';
 import { costSnapshot, stockQuantity } from './cost';
+import { needsReorder } from './reorder-point';
 import { mutationInput, fingerprint } from './validation';
 import { operationPermissions, type Operation, type Input, type InventoryResult } from './types';
 export async function mutateInventory(db:PrismaClient,auth:AuthService,token:string|undefined,operation:Operation,input:Input):Promise<InventoryResult> {
@@ -50,6 +51,25 @@ export async function mutateInventory(db:PrismaClient,auth:AuthService,token:str
     if(received<0||received+order.cancelled_quantity>order.stock_quantity)throw new AuthError(409,'発注の未入庫数を超えています。数量を確認してください');
     await tx.toolOrder.update({where:{id:order.id},data:{received_quantity:received}});
    }
+   const orderReceipts:{order_id:string;quantity:number}[]=[];
+   if(operation==='receive'&&!order){
+    const orders=await tx.toolOrder.findMany({where:{tool_id:toolId},orderBy:[{created_at:'asc'},{id:'asc'}]});
+    let remaining=delta;
+    for(const pending of orders){
+     const quantity=Math.min(remaining,pending.stock_quantity-pending.received_quantity-pending.cancelled_quantity);
+     if(quantity<=0)continue;
+     await tx.toolOrder.update({where:{id:pending.id},data:{received_quantity:{increment:quantity}}});
+     orderReceipts.push({order_id:pending.id,quantity});remaining-=quantity;
+     if(remaining===0)break;
+    }
+   }else if(operation==='reverse'&&original!.type==='RECEIVE'&&!order){
+    const log=await tx.auditLog.findFirst({where:{action:'INVENTORY_MUTATION',entity_type:'inventory_transactions',entity_id:original!.id}});
+    const allocations=(log?.details as unknown as {order_receipts?:{order_id:string;quantity:number}[]}|undefined)?.order_receipts??[];
+    for(const allocation of allocations){
+     const updated=await tx.toolOrder.updateMany({where:{id:allocation.order_id,tool_id:toolId,received_quantity:{gte:allocation.quantity}},data:{received_quantity:{decrement:allocation.quantity}}});
+     if(updated.count!==1)throw new AuthError(409,'発注の入庫数が変更されています。再確認してください');
+    }
+   }
    const after=before+delta;
    if(after<reserved)throw new AuthError(409,'出庫可能在庫が不足しています。実在庫と引当を確認してください');
    if(after>2147483647||after<0)throw new AuthError(409,'変更後の在庫が数量の上限・下限を超えます');
@@ -57,19 +77,18 @@ export async function mutateInventory(db:PrismaClient,auth:AuthService,token:str
     const updated=await tx.stockBalance.updateMany({where:{id:stock.id,on_hand:before,reserved},data:{on_hand:after}});
     if(updated.count!==1)throw new AuthError(409,'在庫が変わりました。再確認してください');
    }else await tx.stockBalance.create({data:{tool_id:toolId,location_id:locationId,on_hand:after,reserved:0}});
-   const cost=original?{unit_price:original.unit_price,amount:original.amount?.negated()??null,purchase_unit_price:original.purchase_unit_price,cost_units_per_order:original.cost_units_per_order,stock_unit:original.stock_unit,cost_basis:original.cost_basis}:costSnapshot(tool,delta);
+   const cost=original?{unit_price:original.unit_price,amount:original.amount?.negated()??null,purchase_unit_price:original.purchase_unit_price,cost_units_per_order:original.cost_units_per_order,cost_basis:original.cost_basis}:costSnapshot(tool,delta);
    const transaction=await tx.inventoryTransaction.create({data:{tool_id:toolId,location_id:locationId,actor_user_id:actor.id,type,quantity:delta,idempotency_key:key,reverses_id:original?.id??null,reason:operation==='reverse'?(request.reason??'入出庫履歴から取消'):request.reason,on_hand_after:after,...cost,tool_order_id:orderId??null,receipt_units_per_order:operation==='issue'?null:receiptPack}});
    const result:InventoryResult={id:transaction.id,type,tool_id:toolId,location_id:locationId,actor_user_id:actor.id,machine_id:null,quantity:delta,on_hand_before:before,on_hand_after:after,reserved,reason:transaction.reason,reverses_id:transaction.reverses_id,created_at:transaction.created_at.toISOString()};
-   await audit(tx,actor.id,'INVENTORY_MUTATION','inventory_transactions',transaction.id,{request,request_fingerprint:signature,result});
+   await audit(tx,actor.id,'INVENTORY_MUTATION','inventory_transactions',transaction.id,{request,request_fingerprint:signature,result,...(orderReceipts.length?{order_receipts:orderReceipts}:{})});
    if(operation==='issue'){
-    const [balance,policy,ordered,newOrders]=await Promise.all([
+    const [balance,policy,newOrders]=await Promise.all([
      tx.stockBalance.aggregate({where:{tool_id:toolId},_sum:{on_hand:true}}),
      tx.inventoryPolicy.findUnique({where:{tool_id:toolId},select:{reorder_point:true}}),
-     tx.purchaseOrderItem.findMany({where:{tool_id:toolId,order_id_record:{status:{in:['ORDERED','PARTIALLY_RECEIVED']}}},select:{ordered_quantity:true,received_quantity:true}}),
      tx.toolOrder.findMany({where:{tool_id:toolId},select:{stock_quantity:true,received_quantity:true,cancelled_quantity:true}}),
     ]);
-    const onOrder=newOrders.reduce((sum,item)=>sum+item.stock_quantity-item.received_quantity-item.cancelled_quantity,0)+ordered.reduce((sum,item)=>sum+Math.max(item.ordered_quantity-item.received_quantity,0),0);
-    if((balance._sum.on_hand??0)<(policy?.reorder_point??0)+onOrder){
+    const onOrder=newOrders.reduce((sum,item)=>sum+item.stock_quantity-item.received_quantity-item.cancelled_quantity,0);
+    if(needsReorder(balance._sum.on_hand??0,onOrder,policy?.reorder_point??0)){
      const entry=await tx.orderListEntry.upsert({where:{tool_id:toolId},create:{tool_id:toolId,trigger_transaction_id:transaction.id},update:{trigger_transaction_id:transaction.id}});
      await audit(tx,actor.id,'ORDER_LIST_UPDATED','order_list_entries',entry.id,{tool_id:toolId,trigger_transaction_id:transaction.id});
     }

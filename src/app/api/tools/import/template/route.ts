@@ -9,7 +9,7 @@ export async function GET(request:Request) {
   await auth().authenticate(requestToken(request),'tools:import');
   const mode=new URL(request.url).searchParams.get('mode')??'create';
   if(mode!=='create' && mode!=='update')throw new AuthError(400,'登録・変更の種類を確認してください。');
-  const buffer=await createToolTemplate(mode);
-  return new Response(new Uint8Array(buffer),{headers:{'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="toolstock-${mode==='update'?'update':'template'}.xlsx"`,'Cache-Control':'no-store'}});
+  const buffer=await createToolTemplate('common');
+  return new Response(new Uint8Array(buffer),{headers:{'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':'attachment; filename="toolstock-template.xlsx"','Cache-Control':'no-store'}});
  }catch(error){return errorResponse(error);}
 }
