@@ -68,7 +68,10 @@ test('発注APIは認証・権限・Originを確認し箱発注から入出庫�
  assert.equal(order.stock_quantity,20);assert.equal((await post('/api/orders','WORKER',payload)).status,200);
  const page=await (await request('/tools/'+toolId,'WORKER')).text();assert.doesNotMatch(page,/発注済み・未入庫|未入庫分を発注取消|name="tool_order_id"/);
  const main=page.slice(page.indexOf('<main'),page.indexOf('</main>'));
- assert.doesNotMatch(main, /在庫単位|発注単位|入数|箱|個|name="quantity_unit"/);
+ assert.doesNotMatch(main, /在庫単位|発注単位|箱|個|name="quantity_unit"/);
+ const movements=main.slice(0,main.indexOf('<section aria-labelledby="tool-information"'));
+ assert.doesNotMatch(movements,/入数/);
+ assert.match(main,/<th[^>]*>入数<\/th>/);
  const receipt=await post('/api/inventory/receive','WORKER',{tool_id:toolId,location_id:locationId,quantity:1,quantity_unit:'order',tool_order_id:order.id,request_key:randomUUID()});
  assert.equal(receipt.status,200);assert.equal((await receipt.json()).transaction.quantity,10);
  const out=await issue(3);assert.equal(out.status,200);const id=(await out.json()).transaction.id;

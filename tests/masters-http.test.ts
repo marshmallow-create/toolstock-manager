@@ -184,7 +184,8 @@ test('新規登録画面の一覧と同じ項目から登録しカテゴリー�
  const page = await request('/tools/new', 'ADMIN'); assert.equal(page.status, 200);
  const html = await page.text();
  assert.doesNotMatch(html, /在庫単位|発注単位/);
- assert.ok(html.indexOf('name="unit_price"')<html.indexOf('name="units_per_order"'));
+ assert.ok(html.indexOf('name="order_quantity"')<html.indexOf('name="units_per_order"'));
+ assert.ok(html.indexOf('name="units_per_order"')<html.indexOf('name="unit_price"'));
  for (const label of ['品目コード', '品目名', 'カテゴリー', '在庫', '発注済み', '発注ライン', '発注数', '発注単価', '部門', '棚番']) assert.ok(html.includes(label), label);
  assert.ok(!html.includes('工具全体の在庫方針'));
  const created = await form('/api/tools', 'ADMIN', { tool_code: 'LIST-FORM', name: '一覧形式の工具', category: 'DRILL', on_hand: '17', reorder_point: '4', order_quantity: '6', unit_price: '456.78', department: '17362', shelf_code: 'SHELF-FORM' });
@@ -202,7 +203,12 @@ test('新規登録画面の一覧と同じ項目から登録しカテゴリー�
  const worker = await request('/api/tools?tool_code=LIST-FORM', 'WORKER');
  assert.equal((await worker.json()).tools[0].unit_price, '456.78');
  const editPage = await request('/tools/' + row.id + '/edit', 'ADMIN');
- assert.match(await editPage.text(), /name="shelf_code"[^>]*value="SHELF-FORM"/);
+ const editHtml=await editPage.text();
+ assert.match(editHtml, /name="shelf_code"[^>]*value="SHELF-FORM"/);
+ assert.ok(editHtml.indexOf('name="order_quantity"')<editHtml.indexOf('name="units_per_order"'));
+ assert.ok(editHtml.indexOf('name="units_per_order"')<editHtml.indexOf('name="unit_price"'));
+ const detailHtml=await (await request('/tools/'+row.id,'ADMIN')).text();
+ assert.match(detailHtml, /<th[^>]*>入数<\/th>/);
  const changed = await form('/api/tools/' + row.id, 'ADMIN', { ...base, tool_code: 'LIST-FORM', unit: '個', active: 'true', shelf_code: 'SHELF-CHANGED' });
  assert.equal(changed.status, 303);
  const after = (await (await request('/api/tools?tool_code=LIST-FORM', 'ADMIN')).json()).tools[0];

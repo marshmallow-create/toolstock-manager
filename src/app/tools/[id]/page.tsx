@@ -33,7 +33,7 @@ export default async function ToolDetail({ params, searchParams }: { params: Pro
   </section>
   <section aria-labelledby="tool-information" className={'mb-3 ' + panelClass}>
    <h2 id="tool-information" className="mb-3 text-xl font-bold">工具情報</h2>
-   <ToolStockTable tools={[{ ...tool, reorder_point: tool.policy?.reorder_point ?? null }]} />
+   <ToolStockTable tools={[{ ...tool, reorder_point: tool.policy?.reorder_point ?? null }]} showUnitsPerOrder />
    {editable && <Link href={'/tools/' + tool.id + '/edit'} className="ui-secondary mt-3">工具情報変更</Link>}
   </section>
   <section aria-labelledby="tool-change-history" className={'mb-3 ' + panelClass}>

@@ -3,13 +3,14 @@ import type { ReactNode } from 'react';
 import type { Viewer } from '@/lib/auth/service';
 import { can, roleLabels } from '@/lib/auth/permissions';
 import { DashboardMenu } from './dashboard-menu';
-type WorkspacePage = 'dashboard' | 'history' | 'orders' | 'tool-new' | 'users' | 'login' | 'other';
+type WorkspacePage = 'dashboard' | 'analytics' | 'history' | 'orders' | 'tool-new' | 'users' | 'login' | 'other';
 export function WorkspaceShell({ title, user, page = 'other', children, pendingOrderCount = 0 }: { title: string; user?: Viewer; page?: WorkspacePage; children: ReactNode; pendingOrderCount?: number }) {
  const links = user ? [
   { page: 'dashboard', permission: 'inventory:read', href: '/dashboard', label: 'マイページ' },
   { page: 'history', permission: 'history:own', href: '/history', label: '入出庫履歴' },
   { page: 'orders', permission: 'inventory:read', href: '/orders', label: '発注リスト' },
   { page: 'tool-new', permission: 'tools:create', href: '/tools/new', label: '工具登録' },
+  { page: 'analytics', permission: 'history:all', href: '/analytics', label: 'ダッシュボード' },
   { page: 'password', permission: 'password:change', href: '/account/password', label: 'パスワード変更' },
   { page: 'users', permission: 'users:manage', href: '/admin/users', label: 'ユーザー・権限管理' },
  ].filter(link => link.page !== page && can(user.role, link.permission)).map(({ href, label }) => ({ href, label })) : [];

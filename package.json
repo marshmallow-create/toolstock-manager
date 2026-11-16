@@ -7,6 +7,8 @@
     "node": ">=22.12.0"
   },
   "scripts": {
+    "test:analytics": "node scripts/run-typescript.mjs analytics",
+    "test:analytics-db": "node scripts/run-typescript.mjs analytics-db",
     "dev": "next dev --hostname 127.0.0.1",
     "build": "prisma generate && next build",
     "start": "next start --hostname 127.0.0.1",
@@ -19,7 +21,7 @@
     "auth:setup-dev": "node scripts/run-typescript.mjs setup",
     "test:auth": "node scripts/run-typescript.mjs auth",
     "test:http": "node scripts/run-typescript.mjs http",
-    "test": "npm run test:permissions && npm run test:roles-migration && npm run test:cleanup-migration && npm run test:db && npm run test:auth && npm run test:masters && npm run test:inventory && npm run test:orders && npm run test:tool-import && npm run build && npm run test:http && npm run test:masters-http && npm run test:inventory-http && npm run test:orders-http && npm run test:tool-import-http",
+    "test": "npm run test:analytics && npm run test:analytics-db && npm run test:permissions && npm run test:roles-migration && npm run test:cleanup-migration && npm run test:db && npm run test:auth && npm run test:masters && npm run test:inventory && npm run test:orders && npm run test:tool-import && npm run build && npm run test:http && npm run test:masters-http && npm run test:inventory-http && npm run test:orders-http && npm run test:tool-import-http",
     "test:orders": "node scripts/run-typescript.mjs orders",
     "test:orders-http": "node scripts/run-typescript.mjs orders-http",
     "test:cleanup-migration": "node --test tests/backup-target.test.mjs && node scripts/run-typescript.mjs cleanup-migration && node scripts/run-typescript.mjs current-cleanup-migration",

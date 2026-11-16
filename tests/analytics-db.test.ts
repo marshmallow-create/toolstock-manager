@@ -1,0 +1,42 @@
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { databaseFixture } from './helpers/database';
+import { readAnalytics } from '../src/lib/analytics/read';
+import { analyticsFilters } from '../src/lib/analytics/summary';
+let f: Awaited<ReturnType<typeof databaseFixture>>;
+before(async()=>{ f=await databaseFixture('analytics_test'); });
+after(async()=>{ await f?.close(); });
+test('実DBで期間外の取消・調整を除外し、無効工具・欠損金額・比較期間を集計する', async()=>{
+ const tool=await f.db.tool.create({data:{tool_code:'AN-A',name:'架空ドリル',category:'ドリル',active:false,unit_price:'99999',units_per_order:10}});
+ const other=await f.db.tool.create({data:{tool_code:'AN-B',name:'架空タップ',category:'TAP'}});
+ const shelf=await f.db.location.create({data:{location_code:'AN',name:'架空棚'}});
+ const base={tool_id:tool.id,location_id:shelf.id,actor_user_id:f.users.WORKER,reason:'分析テスト',created_at:new Date('2026-11-01T03:00:00Z')};
+ const add=(type:'ISSUE'|'RECEIVE'|'ADJUSTMENT'|'REVERSAL',quantity:number,amount:string|null,extra:Record<string,unknown>={})=>f.db.inventoryTransaction.create({data:{...base,type,quantity,amount,idempotency_key:randomUUID(),...extra}});
+ await add('ISSUE',-3,'-1500'); await add('ISSUE',-1,null); await add('RECEIVE',10,'5000'); await add('ADJUSTMENT',20,'10000');
+ const cancelled=await add('ISSUE',-10,'-5000');
+ await add('REVERSAL',10,'5000',{reverses_id:cancelled.id,created_at:new Date('2026-12-01T03:00:00Z')});
+ await add('ISSUE',-2,'-1000',{created_at:new Date('2026-10-01T03:00:00Z')});
+ await add('ISSUE',-20,'-2000',{tool_id:other.id});
+ await add('ISSUE',-1,'-99',{created_at:new Date('2026-10-31T14:59:59Z')});
+ const filters=analyticsFilters({category:'DRILL'},new Date('2026-11-16T03:00:00Z'));
+ const result=await readAnalytics(f.db,f.tokens.WORKER,filters);
+ assert.equal(result.current.issueAmount,'1500.00'); assert.equal(result.current.receiveAmount,'5000.00');
+ assert.equal(result.current.issueCount,2); assert.equal(result.current.issueQuantity,4); assert.equal(result.current.missingIssue,1);
+ assert.equal(result.current.ranking[0].quantity,4); assert.equal(result.current.ranking[0].active,false);
+ assert.equal(result.previous.issueAmount,'1000.00');
+ assert.equal(result.tools.length,2);
+ const filtered=await readAnalytics(f.db,f.tokens.ADMIN,analyticsFilters({tool_id:other.id},new Date('2026-11-16T03:00:00Z')));
+ assert.equal(filtered.current.issueAmount,'2000.00');
+ const empty=await readAnalytics(f.db,f.tokens.ADMIN,analyticsFilters({period:'custom',from:'2020-01-01',to:'2020-01-03'}));
+ assert.equal(empty.current.issueCount,0);
+ await assert.rejects(()=>readAnalytics(f.db,undefined,filters), (e:unknown)=> e instanceof Error && 'status' in e && e.status===401);
+});
+
+test('50件を超える全履歴を集計する',async()=>{
+ const tool=await f.db.tool.create({data:{tool_code:'AN-MANY',name:'集計件数確認',category:'DRILL'}});
+ const shelf=await f.db.location.findFirstOrThrow();
+ await f.db.inventoryTransaction.createMany({data:Array.from({length:60},()=>({tool_id:tool.id,location_id:shelf.id,actor_user_id:f.users.ADMIN,type:'ISSUE' as const,quantity:-1,amount:'-0.01',idempotency_key:randomUUID(),created_at:new Date('2026-11-01T00:00:00Z')}))});
+ const result=await readAnalytics(f.db,f.tokens.ADMIN,analyticsFilters({tool_id:tool.id},new Date('2026-11-16T03:00:00Z')));
+ assert.equal(result.current.issueCount,60); assert.equal(result.current.issueAmount,'0.60');
+});
