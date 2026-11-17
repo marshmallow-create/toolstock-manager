@@ -11,6 +11,7 @@
 | [DB](docs/database.md) | 現行テーブル、制約、整理移行 |
 | [Excel](docs/excel-import.md) | 共通テンプレート、確認・確定、出力 |
 | [保守](docs/maintenance.md) | 検証、バックアップ、整理記録 |
+| [Render](docs/render-deployment.md) | クラウド構成、初期管理者、公開URL、バックアップ |
 
 ## 必要環境
 

@@ -1,0 +1,33 @@
+# The first sync must be reviewed and approved in Render before resources are created.
+services:
+  - type: web
+    name: toolstock-manager
+    runtime: node
+    region: singapore
+    plan: 0.5c-512mb
+    branch: main
+    autoDeployTrigger: off
+    buildCommand: npm ci --include=dev && npm run build
+    preDeployCommand: npm run db:migrate && npm run auth:setup-production
+    startCommand: exec node node_modules/next/dist/bin/next start --hostname 0.0.0.0 --port "$PORT"
+    healthCheckPath: /api/health/ready
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: toolstock-manager-db
+          property: connectionString
+      - key: BOOTSTRAP_ADMIN_EMPLOYEE_CODE
+        value: ADMIN001
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        generateValue: true
+
+databases:
+  - name: toolstock-manager-db
+    region: singapore
+    plan: 0.1c-256mb
+    postgresMajorVersion: "17"
+    diskSizeGB: 1
+    databaseName: toolstock
+    ipAllowList: []

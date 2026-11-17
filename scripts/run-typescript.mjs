@@ -5,6 +5,9 @@ import { resolve } from 'node:path';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const targets = {
+  deployment: { entry: 'tests/deployment.test.ts', args: ['--test'] },
+  'bootstrap-admin': { entry: 'tests/bootstrap-admin.test.ts', args: ['--test'] },
+  'production-admin': { entry: 'scripts/setup-production-admin.ts', args: [] },
   analytics: { entry: 'tests/analytics.test.ts', args: ['--test'] },
   'analytics-db': { entry: 'tests/analytics-db.test.ts', args: ['--test'] },
   orders: { entry: 'tests/order-list.test.ts', args: ['--test'] },

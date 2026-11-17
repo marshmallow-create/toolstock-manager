@@ -3,9 +3,10 @@ import { redirect } from 'next/navigation';
 import { NextResponse } from 'next/server';
 import { getDb } from '../db';
 import { AuthService, AuthError, MAX_MS } from './service';
+import { resolveAppOrigin } from './origin';
 export const COOKIE='toolstock_session';
 export const auth=()=>new AuthService(getDb());
-export function appOrigin() { return new URL(process.env.APP_ORIGIN??'http://127.0.0.1:3000').origin; }
+export function appOrigin() { return resolveAppOrigin(process.env); }
 export function requestToken(request:Request) { return request.headers.get('cookie')?.split(';').map(v=>v.trim()).find(v=>v.startsWith(COOKIE+'='))?.slice(COOKIE.length+1); }
 export async function pageUser(permission?:string) {
  try { return await auth().authenticate((await cookies()).get(COOKIE)?.value,permission); }

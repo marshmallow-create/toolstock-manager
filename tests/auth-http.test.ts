@@ -52,6 +52,13 @@ test('匿名ユーザーの保護画面はログインへ誘導しAPIは401',asy
  }
  for(const path of ['/api/auth/session','/api/admin/users','/api/health/db']) assert.equal((await request(path)).status,401,path);
 });
+
+test('Renderの準備確認は匿名でDB接続だけを返し、業務情報を公開しない',async()=>{
+ const response=await request('/api/health/ready');
+ assert.equal(response.status,200);
+ assert.match(response.headers.get('cache-control')??'',/no-store/);
+ assert.deepEqual(await response.json(),{status:'ok'});
+});
 test('全2ロールの画面・APIアクセス、Cookie偽造、他Originを拒否',async()=>{
  for(const code of ['HTTP-A','HTTP-ADMIN']){
   const cookie=await login(code);
