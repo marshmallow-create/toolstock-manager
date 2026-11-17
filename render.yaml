@@ -4,12 +4,12 @@ services:
     name: toolstock-manager
     runtime: node
     region: singapore
-    plan: 0.5c-512mb
+    plan: free
     branch: main
     autoDeployTrigger: off
     buildCommand: npm ci --include=dev && npm run build
-    preDeployCommand: npm run db:migrate && npm run auth:setup-production
-    startCommand: exec node node_modules/next/dist/bin/next start --hostname 0.0.0.0 --port "$PORT"
+    # Free services do not support pre-deploy commands. Prepare the database before listening.
+    startCommand: npm run db:migrate && npm run auth:setup-production && exec node node_modules/next/dist/bin/next start --hostname 0.0.0.0 --port "$PORT"
     healthCheckPath: /api/health/ready
     envVars:
       - key: NODE_VERSION
@@ -26,8 +26,7 @@ services:
 databases:
   - name: toolstock-manager-db
     region: singapore
-    plan: 0.1c-256mb
+    plan: free
     postgresMajorVersion: "17"
-    diskSizeGB: 1
     databaseName: toolstock
     ipAllowList: []
