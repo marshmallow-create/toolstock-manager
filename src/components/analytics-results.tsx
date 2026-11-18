@@ -30,7 +30,7 @@ export function AnalyticsResults({ current, previous, filters }: { current:Summa
     {label:'入庫金額',value:current.receiveCount>0&&current.missingReceive===current.receiveCount?'—':yen(current.receiveAmount),missing:current.missingReceive,detail:comparison(current.receiveAmount,previous.receiveAmount,current.missingReceive+previous.missingReceive>0,(current.receiveCount>0&&current.missingReceive===current.receiveCount)||(previous.receiveCount>0&&previous.missingReceive===previous.receiveCount))},
     {label:'出庫数量',value:count(current.issueQuantity),missing:0,detail:'期間内に出庫した数量の合計'},
     {label:'使用工具数',value:count(current.toolCount)+'種類',missing:0,detail:'期間内に出庫した工具の種類数'},
-   ].map(card=><article key={card.label} className={panelClass+' min-w-0 p-5'}>
+   ].map(card=><article key={card.label} className={panelClass+' metric-card min-w-0 p-5'}>
     <h2 className="font-semibold text-slate-600">{card.label}{card.missing>0?'（判明分）':''}</h2>
     <p className="my-2 break-words text-2xl font-bold tabular-nums text-blue-800">{card.value}</p><p className="text-xs text-slate-500">{card.detail}</p>
    </article>)}

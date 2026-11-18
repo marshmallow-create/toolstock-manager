@@ -9,6 +9,6 @@ export function OrderForm({entryId,tool,quantity,requestKey}:{entryId:string;too
   <input type="hidden" name="expected_units_per_order" value={tool.units_per_order}/><input type="hidden" name="request_key" value={requestKey}/>
   <input type="hidden" name="quantity" value={quantity}/>
   <button disabled={invalid} className={buttonClass}>発注済みへ登録</button>
-  <button formAction="/api/orders/cancel" className={buttonClass}>取消</button>
+  <button formAction="/api/orders/cancel" className="ui-secondary">取消</button>
  </form>;
 }

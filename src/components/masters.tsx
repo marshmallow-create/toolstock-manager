@@ -2,7 +2,7 @@ import type { ComponentProps } from 'react';
 import { CategoryField, DepartmentField } from './tool-option-fields';
 export const inputClass = 'min-w-0 w-full rounded border border-slate-300 bg-white px-3 py-1.5 text-sm';
 export const buttonClass = 'ui-button w-fit max-w-full justify-self-start disabled:opacity-50';
-export const panelClass = 'ui-panel rounded-xl bg-white p-3 shadow-sm';
+export const panelClass = 'ui-panel rounded-xl bg-white p-4 shadow-sm sm:p-5';
 export type Search = Record<string, string | string[] | undefined>;
 export const queryText = (value: unknown) => typeof value === 'string' ? value : '';
 export function Messages({ search }: { search: Search }) {
@@ -19,35 +19,32 @@ export function Active({ value = true }: { value?: boolean }) {
 }
 type ToolValues = { tool_code: string; name: string; category: string; units_per_order?:number; active: boolean; on_hand: number; order_quantity: number; department?: string; shelf_code?: string; unit_price?: string | null; policy?: { reorder_point: number } | null };
 export function ToolForm({ action, tool }: { action: string; tool?: ToolValues }) {
- const formClass = 'grid max-w-3xl gap-3 sm:grid-cols-2 ' + panelClass;
- if (!tool) return <form action={action} method="post" className={formClass}>
-  <Field label="品目コード" name="tool_code" required maxLength={32} pattern="[A-Za-z0-9_\x2D]+" />
-  <Field label="品目名" name="name" required maxLength={100} />
-  <CategoryField required />
-  <NumberField label="在庫" name="on_hand" defaultValue={0} />
-  <NumberField label="発注ライン" name="reorder_point" defaultValue={0} />
-  <NumberField label="発注数" name="order_quantity" defaultValue={0} />
-  <NumberField label="入数" name="units_per_order" min={1} defaultValue={1} />
-  <Field label="発注単価" name="unit_price" required inputMode="decimal" pattern="[0-9]{1,12}(\.[0-9]{1,2})?" maxLength={15} defaultValue="0" />
-  <DepartmentField />
-  <Field label="棚番" name="shelf_code" maxLength={100} />
-  <label className="grid gap-1">発注済み<output className="rounded border border-slate-200 bg-slate-50 px-3 py-1.5 text-slate-600" title="発注データから自動集計します">0</output></label>
-  <p className="text-sm text-slate-600 sm:col-span-2">発注済みは自動集計されます。</p>
-  <button className={buttonClass + ' sm:col-span-2'}>工具を登録する</button>
- </form>;
- return <form action={action} method="post" className={formClass}>
-  <Field label="品目コード" name="tool_code" required maxLength={32} pattern="[A-Za-z0-9_\x2D]+" defaultValue={tool?.tool_code} readOnly={!!tool} />
-  <Field label="品目名" name="name" required maxLength={100} defaultValue={tool?.name} />
-  <CategoryField required value={tool.category} />
-  <NumberField label="在庫" name="on_hand" defaultValue={tool.on_hand} />
-  <NumberField label="発注ライン" name="reorder_point" defaultValue={tool.policy?.reorder_point ?? 0} />
-  <NumberField label="発注数" name="order_quantity" defaultValue={tool.order_quantity} />
-  <NumberField label="入数" name="units_per_order" min={1} defaultValue={tool.units_per_order??1} />
-  <input type="hidden" name="expected_on_hand" value={tool.on_hand} />
-  {tool.unit_price !== undefined && <Field label="発注単価" name="unit_price" required inputMode="decimal" pattern="[0-9]{1,12}(\.[0-9]{1,2})?" maxLength={15} defaultValue={tool.unit_price?.replace(/\.0+$/, '') ?? '0'} />}
-  <DepartmentField value={tool.department} />
-  <Field label="棚番" name="shelf_code" maxLength={Math.max(100, tool.shelf_code?.length ?? 0)} defaultValue={tool.shelf_code ?? ''} />
-  <Active value={tool?.active} />
-  <button className={buttonClass + ' sm:col-span-2'}>{tool ? '変更を保存する' : '工具を登録する'}</button>
+ return <form action={action} method="post" className={'grid max-w-3xl gap-5 ' + panelClass}>
+  <fieldset className="tool-fields">
+   <legend>基本情報</legend>
+   <Field label="品目コード" name="tool_code" required maxLength={32} pattern="[A-Za-z0-9_\x2D]+" defaultValue={tool?.tool_code} readOnly={!!tool} />
+   <Field label="品目名" name="name" required maxLength={100} defaultValue={tool?.name} />
+   <CategoryField required value={tool?.category} />
+  </fieldset>
+  <fieldset className="tool-fields">
+   <legend>在庫・発注</legend>
+   <NumberField label="在庫" name="on_hand" defaultValue={tool?.on_hand ?? 0} />
+   <NumberField label="発注ライン" name="reorder_point" defaultValue={tool?.policy?.reorder_point ?? 0} />
+   <NumberField label="発注数" name="order_quantity" defaultValue={tool?.order_quantity ?? 0} />
+   <NumberField label="入数" name="units_per_order" min={1} defaultValue={tool?.units_per_order ?? 1} />
+   {tool && <input type="hidden" name="expected_on_hand" value={tool.on_hand} />}
+   {(!tool || tool.unit_price !== undefined) && <Field label="発注単価" name="unit_price" required inputMode="decimal" pattern="[0-9]{1,12}(\.[0-9]{1,2})?" maxLength={15} defaultValue={tool?.unit_price?.replace(/\.0+$/, '') ?? '0'} />}
+   {!tool && <>
+    <label className="grid gap-1">発注済み<output className="rounded border border-slate-200 bg-slate-50 px-3 py-1.5" title="発注データから自動集計します">0</output></label>
+    <p className="text-xs text-slate-600 sm:col-span-2">発注済みは自動集計されます。</p>
+   </>}
+  </fieldset>
+  <fieldset className="tool-fields">
+   <legend>管理情報</legend>
+   <DepartmentField value={tool?.department} />
+   <Field label="棚番" name="shelf_code" maxLength={Math.max(100, tool?.shelf_code?.length ?? 0)} defaultValue={tool?.shelf_code} />
+   {tool && <Active value={tool.active} />}
+  </fieldset>
+  <button className={buttonClass}>{tool ? '変更を保存する' : '工具を登録する'}</button>
  </form>;
 }

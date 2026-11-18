@@ -17,11 +17,11 @@ export function DashboardMenu({ links, pendingOrderCount = 0 }: { links: { href:
   document.addEventListener('keydown', escape);
   return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
  }, [open]);
- return <div ref={container} className="relative">
-  <button ref={button} type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)} className="ui-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">
+ return <div ref={container} className="relative w-fit">
+  <button ref={button} type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)} className="menu-button">
     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="size-4"><path d="M4 6h16M4 12h16M4 18h16" /></svg>メニュー{warning}
   </button>
-  <nav id={id} aria-label="利用できる機能" hidden={!open} className="absolute right-0 z-20 mt-2 w-64 max-w-[calc(100vw-2.5rem)] rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+  <nav id={id} aria-label="利用できる機能" hidden={!open} className="absolute left-0 z-20 mt-2 w-64 max-w-[calc(100vw-5rem)] rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
    <ul>{links.map(link => <li key={link.href}><Link href={link.href} onClick={() => setOpen(false)} className="menu-link block rounded-lg px-4 py-3 font-medium focus-visible:outline-2 focus-visible:outline-blue-700">{link.label}{link.href === '/orders' && warning}</Link></li>)}</ul>
   </nav>
  </div>;

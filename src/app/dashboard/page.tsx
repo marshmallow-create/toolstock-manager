@@ -9,6 +9,6 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
  const pendingOrderCount = await getDb().orderListEntry.count();
  return <WorkspaceShell title="マイページ" user={user} page="dashboard" pendingOrderCount={pendingOrderCount}>
   {queryText(search.denied) && <p role="alert" className="mb-3 rounded bg-red-50 p-4 text-red-800">この画面にアクセスする権限がありません。</p>}
-  <section aria-labelledby="tools-heading"><h2 id="tools-heading" className="mb-3 text-xl font-bold">工具一覧</h2><ToolsList search={search} canExport={can(user.role,'tools:export')} /></section>
+  <ToolsList search={search} canExport={can(user.role,'tools:export')} />
  </WorkspaceShell>;
 }

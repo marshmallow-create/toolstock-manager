@@ -10,7 +10,7 @@ type ToolStockRow = {
 };
 
 export function ToolStockTable({ tools, showUnitsPerOrder = false }: { tools: ToolStockRow[]; showUnitsPerOrder?: boolean }) {
- return <div className="data-table overflow-x-auto rounded-xl bg-white"><table className="w-full whitespace-nowrap text-left text-sm leading-tight [&_td]:px-3 [&_td]:py-2.5 [&_th]:px-3 [&_th]:py-2.5">
+ return <div className="data-table stock-table overflow-x-auto rounded-xl bg-white"><table className="w-full whitespace-nowrap text-left text-sm leading-tight [&_td]:px-3 [&_td]:py-2.5 [&_th]:px-3 [&_th]:py-2.5">
   <caption className="sr-only">工具の在庫・発注情報と棚番。発注済みは未入荷数、発注数は未処理の発注候補数、発注単価は工具に登録した価格。</caption>
   <thead><tr>{['品目コード', '品目名', 'カテゴリー', '在庫', '発注済み', '発注ライン', '発注数', ...(showUnitsPerOrder ? ['入数'] : []), '発注単価', '部門', '棚番'].map((h,index) => <th key={h} scope="col" className={'border-b p-4'+(index>=3&&index<=(showUnitsPerOrder?8:7)?' numeric':'')+(index===3?' tool-stock-heading':index===4?' tool-pending-heading':'')}>{h}</th>)}</tr></thead>
   <tbody>{tools.map(tool => <tr key={tool.id} className="hover:bg-slate-50" data-needs-order={needsReorder(tool.on_hand,tool.on_order,tool.reorder_point??0)}>
